@@ -219,11 +219,21 @@ def _row_to_task(row: sqlite3.Row) -> dict[str, Any]:
         "toggl_project_id": row["toggl_project_id"],
         "closed": bool(row["closed"]),
         "closed_at": row["closed_at"],
+        "first_seen": row["first_seen"],
         "day": row["plan_day"],
         "position": row["plan_position"],
         "plan_note": row["plan_note"],
         "est_minutes": row["est_minutes"],
         "done": bool(row["done_local"]),
+        # Three zones, all derived from the plan row:
+        #   ordered    a manual position -> he arranged it
+        #   unordered  a row but no position -> he has seen it, not ranked it
+        #   new        no row at all -> arrived from a sync, untriaged
+        "zone": (
+            "new"
+            if row["plan_day"] is None
+            else ("ordered" if row["plan_position"] is not None else "unordered")
+        ),
     }
 
 
@@ -239,22 +249,59 @@ def _sort_key(task: dict[str, Any]) -> tuple:
 
 
 def ordered_tasks(conn: sqlite3.Connection, include_done: bool = True) -> list[dict[str, Any]]:
-    """The single list: hand-ordered items first, then the rest by default order.
+    """The main list: hand-ordered items first, then the ones he has seen.
 
-    Nothing is auto-assigned a position, so a fresh sync does not hand you
-    fifty items to sort. Dragging one pulls it into the ordered head.
+    Tasks that arrived from a sync and have never been touched are *not* here
+    — they live in `new_tasks` so a sync cannot disturb an arrangement.
     """
-    tasks = list_tasks(conn, include_done=include_done)
+    tasks = [t for t in list_tasks(conn, include_done=include_done) if t["zone"] != "new"]
     placed = [t for t in tasks if t["position"] is not None]
-    loose = [t for t in tasks if t["position"] is None]
+    seen = [t for t in tasks if t["position"] is None]
     placed.sort(key=lambda t: t["position"])
-    loose.sort(key=_sort_key)
+    # Stable on purpose: the seen-but-unranked tail must not reshuffle itself
+    # every time a due date rolls over.
+    seen.sort(key=lambda t: (t["first_seen"] or "", t["title"].lower()))
     pinned_ids = {t["id"] for t in placed}
-    result = placed + loose
+    result = placed + seen
     for index, task in enumerate(result):
         task["rank"] = index
         task["pinned"] = task["id"] in pinned_ids
     return result
+
+
+def new_tasks(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Untriaged arrivals, newest first. Kept out of the main list entirely."""
+    rows = [t for t in list_tasks(conn) if t["zone"] == "new"]
+    rows.sort(key=lambda t: (t["first_seen"] or "", t["title"].lower()), reverse=True)
+    for task in rows:
+        task["pinned"] = False
+    return rows
+
+
+def acknowledge(conn: sqlite3.Connection, task_id: str) -> None:
+    """Move a new task into the main list without giving it a rank."""
+    if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
+        raise ResolveError(f"unknown task id {task_id!r}")
+    conn.execute(
+        "INSERT INTO plan(task_id, day, position, updated_at) VALUES(?, ?, NULL, ?) "
+        "ON CONFLICT(task_id) DO NOTHING",
+        (task_id, LIST, _now()),
+    )
+    conn.commit()
+
+
+def unacknowledge(conn: sqlite3.Connection, task_id: str) -> None:
+    """Send a task back to the new pile.
+
+    This drops the plan row, so the note, estimate and local tick go with it —
+    that is the point: the task returns to being untriaged.
+    """
+    row = conn.execute("SELECT day FROM plan WHERE task_id = ?", (task_id,)).fetchone()
+    if not row:
+        return
+    conn.execute("DELETE FROM plan WHERE task_id = ?", (task_id,))
+    _rewrite(conn, row["day"], _positions(conn, row["day"]))
+    conn.commit()
 
 
 def list_tasks(
@@ -602,10 +649,11 @@ def sync_log(conn: sqlite3.Connection, limit: int = 30, source: str | None = Non
 def summary(conn: sqlite3.Connection, day: str | None = None) -> dict[str, Any]:
     day = day or today_str()
     tasks = ordered_tasks(conn)
+    fresh = new_tasks(conn)
     open_tasks = [t for t in tasks if not t["done"]]
 
     by_source: dict[str, int] = {}
-    for task in open_tasks:
+    for task in open_tasks + fresh:
         by_source[task["source"]] = by_source.get(task["source"], 0) + 1
 
     overdue = [t for t in open_tasks if t["overdue"]]
@@ -626,6 +674,8 @@ def summary(conn: sqlite3.Connection, day: str | None = None) -> dict[str, Any]:
         "open_count": len(open_tasks),
         "done_count": len(tasks) - len(open_tasks),
         "pinned_count": len([t for t in tasks if t["pinned"]]),
+        "new_count": len(fresh),
+        "new": fresh[:20],
         "estimated_minutes": estimated,
         "unestimated_count": len([t for t in open_tasks if not t["est_minutes"]]),
         "by_source": by_source,

@@ -18,14 +18,23 @@
 </header>
 
 <main>
-  <div class="listbar">
-    <h2>The list <span class="count" id="list-count">0</span></h2>
-    <input type="search" id="search" placeholder="filter…" autocomplete="off">
-    <div class="chips" id="source-chips"></div>
-  </div>
+  <section class="panel">
+    <div class="panel-head">
+      <h2>The list <span class="count" id="list-count">0</span></h2>
+      <input type="search" id="search" placeholder="filter…" autocomplete="off">
+      <div class="chips" id="source-chips"></div>
+    </div>
+    <div class="list" id="task-list"></div>
+    <div class="hint">Drag to set the order. Whatever ends up first is what you are working on.</div>
+  </section>
 
-  <div class="list" id="task-list"></div>
-  <div class="hint">Drag to set the order. Whatever ends up first becomes the task you are working on.</div>
+  <section class="panel panel-new">
+    <div class="panel-head">
+      <h2>New <span class="count" id="new-count">0</span></h2>
+    </div>
+    <div class="list" id="new-list"></div>
+    <div class="hint">Arrivals land here, so a sync never disturbs the order you set. Drag one across to keep it.</div>
+  </section>
 </main>
 
 <div class="drawer" id="drawer" hidden>

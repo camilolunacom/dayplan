@@ -220,7 +220,15 @@ def list_cmd(
         _echo_json(tasks)
         return
     pinned = len([t for t in tasks if t["pinned"]])
-    typer.echo(f"{len(tasks)} task(s), {pinned} ordered by hand")
+    conn = _conn()
+    try:
+        fresh = len(store.new_tasks(conn))
+    finally:
+        conn.close()
+    typer.echo(
+        f"{len(tasks)} task(s), {pinned} ordered by hand"
+        + (f"  (+{fresh} new, see `dayplan new`)" if fresh else "")
+    )
     _print_tasks(tasks, numbered=True)
 
 
@@ -240,6 +248,50 @@ def show(ref: str, json: bool = typer.Option(False, "--json")) -> None:
         return
     for key, value in task.items():
         typer.echo(f"{key:<14} {value}")
+
+
+@app.command("new")
+def new_cmd(
+    limit: int = typer.Option(0, "--limit", "-n"),
+    json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Untriaged arrivals: synced but never placed in the list."""
+    conn = _conn()
+    try:
+        rows = store.new_tasks(conn)
+    finally:
+        conn.close()
+    if limit > 0:
+        rows = rows[:limit]
+    if json:
+        _echo_json(rows)
+        return
+    typer.echo(f"{len(rows)} new task(s)")
+    _print_tasks(rows)
+
+
+@app.command()
+def keep(refs: list[str] = typer.Argument(...)) -> None:
+    """Accept new tasks into the main list, unranked."""
+    conn = _conn()
+    try:
+        for task_id in _resolve_many(conn, refs):
+            store.acknowledge(conn, task_id)
+            typer.echo(f"{task_id} -> list")
+    finally:
+        conn.close()
+
+
+@app.command()
+def dismiss(refs: list[str] = typer.Argument(...)) -> None:
+    """Send tasks back to the new pile. Discards their note and estimate."""
+    conn = _conn()
+    try:
+        for task_id in _resolve_many(conn, refs):
+            store.unacknowledge(conn, task_id)
+            typer.echo(f"{task_id} -> new")
+    finally:
+        conn.close()
 
 
 @app.command()
@@ -438,6 +490,7 @@ def summary(
         f"{data['pinned_count']} ordered by hand"
     )
     by_source = "  ".join(f"{k} {v}" for k, v in sorted(data["by_source"].items()))
+    typer.echo(f"new        {data['new_count']}")
     typer.echo(f"sources    {by_source or 'none'}")
     typer.echo(
         f"estimated  {_fmt_minutes(data['estimated_minutes'])} "

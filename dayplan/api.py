@@ -85,10 +85,12 @@ def create_app() -> FastAPI:
     def state(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
         cfg = load_config()
         tasks = store.ordered_tasks(conn)
+        fresh = store.new_tasks(conn)
         return {
             "today": today_str(),
-            "current": store.next_task(tasks),
+            "current": store.next_task(tasks) or store.next_task(fresh),
             "tasks": tasks,
+            "new": fresh,
             "summary": store.summary(conn),
             "sources": cfg.enabled_sources(),
             "integrations": store.integrations(conn, cfg, history=3),
@@ -144,6 +146,38 @@ def create_app() -> FastAPI:
         except store.ResolveError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"ids": final}
+
+    @app.post("/api/accept")
+    def accept(
+        payload: dict[str, Any] = Body(...),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> dict[str, Any]:
+        """Move a new task into the main list, unranked."""
+        task_id = payload.get("task_id")
+        if not task_id:
+            raise HTTPException(status_code=400, detail="body needs 'task_id'")
+        try:
+            resolved = store.resolve(conn, str(task_id))
+            store.acknowledge(conn, resolved)
+        except store.ResolveError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"task_id": resolved, "zone": "unordered"}
+
+    @app.post("/api/dismiss")
+    def dismiss(
+        payload: dict[str, Any] = Body(...),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> dict[str, Any]:
+        """Send a task back to the new pile, discarding its note and estimate."""
+        task_id = payload.get("task_id")
+        if not task_id:
+            raise HTTPException(status_code=400, detail="body needs 'task_id'")
+        try:
+            resolved = store.resolve(conn, str(task_id))
+        except store.ResolveError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        store.unacknowledge(conn, resolved)
+        return {"task_id": resolved, "zone": "new"}
 
     @app.delete("/api/order/{task_id}")
     def unpin(task_id: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:

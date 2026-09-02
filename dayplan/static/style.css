@@ -140,15 +140,51 @@ button.primary[disabled] { opacity: 0.55; cursor: progress; }
 
 main {
   flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  /* Side by side when there is room; the list gets the larger share. */
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 18px;
   min-height: 0;
   padding: 16px 20px 0;
-  gap: 14px;
-  max-width: 1000px;
+  max-width: 1500px;
   width: 100%;
   margin: 0 auto;
 }
+
+/* Narrower than this and two columns stop being readable: stack them, new
+   below, and let the page scroll as one. */
+@media (max-width: 1100px) {
+  main { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+  main .list { overflow: visible; }
+  .panel { min-height: 0; }
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.panel-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+  flex-wrap: wrap;
+}
+.panel-head h2 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--tx-2);
+  font-weight: 600;
+}
+.panel-head input[type="search"] { flex: 1; min-width: 120px; max-width: 260px; }
+
+.panel-new .list { opacity: 0.92; }
 
 /* --------------------------------------------------------------- featured */
 
@@ -191,18 +227,7 @@ main {
 .card.featured .meta { font-size: 12px; }
 .card.featured .side { align-items: flex-start; padding-top: 3px; }
 
-/* ----------------------------------------------------------------- listbar */
-
-.listbar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
-.listbar h2 {
-  margin: 0;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--tx-2);
-  font-weight: 600;
-}
-.listbar input[type="search"] { flex: 1; min-width: 0; max-width: 320px; }
+/* ------------------------------------------------------------------- chips */
 
 .count {
   background: var(--ui);
@@ -364,7 +389,7 @@ main {
   line-height: 1;
 }
 .iconbtn:hover { background: transparent; color: var(--red); }
-.iconbtn.promote:hover { color: var(--accent); }
+.iconbtn.accept:hover { color: var(--green); }
 
 input[type="checkbox"] { accent-color: var(--green); cursor: pointer; }
 

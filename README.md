@@ -194,7 +194,7 @@ wrong every due date shifts by a day.
 To run the CLI against the hosted instance:
 
 ```bash
-ssh zima 'docker exec dayplan dayplan today'
+ssh zima 'docker exec dayplan dayplan list'
 ssh zima 'docker exec dayplan dayplan sync'
 ```
 
@@ -299,53 +299,64 @@ uv run dayplan serve          # http://127.0.0.1:8787
 
 ## Web UI
 
-Two columns. **Pending** on the left is everything not yet placed on a day,
-sorted overdue first, then by due date, then priority. **Plan** on the right is
-one day, in your order.
+Two columns side by side on a wide screen, stacked on anything narrower than
+1100px.
 
-### Integration status
+**The list** is yours, in priority order. Position 1 renders as a large
+featured card labelled *working on now* — it is the first card of the same
+list, not a separate widget, which is what makes dragging something to the top
+change what you are working on. Below the hand-ordered head, a divider marks
+the tasks you have seen but not ranked; those keep a stable order and never
+reshuffle themselves.
 
-Every sync attempt is recorded per source in a `sync_log` table, and the header
-carries one pill per integration with a status dot. Click any pill (or press
-`i`) for a panel with the last attempt, the last success, how many tasks the
-provider returned, the error text, and the recent attempt history.
+**New** is everything a sync brought in that you have never placed. It sits in
+its own column precisely so a sync cannot disturb an arrangement you already
+made. Drag one across (or hit `→`) to keep it; drag one back to untriage it,
+which discards its note and estimate.
 
-Four states, because the interesting one is easy to miss:
+- Drag within the list to reorder; drag to the top to change the current task.
+- The checkbox, the minutes box and the note save on change. Empty notes
+  collapse to a `+ note` link so the rows stay short.
+- Keys: `/` focus filter, `s` sync, `i` integration status, `Esc` close.
 
-| State | Means |
-| --- | --- |
-| `ok` | synced, and the provider returned tasks |
-| `no tasks` | **synced without error but returned 0 tasks** |
-| `error` | the last attempt failed; the panel shows why |
-| `off` | not configured, and which variable is missing |
+Theming is [Flexoki](https://stephango.com/flexoki) and follows
+`prefers-color-scheme`: paper and the 600 accents in light, black and the 400
+accents in dark.
 
-`no tasks` exists because it is the failure mode that looks like success. Both
-Asana and Jira answer HTTP 200 with an empty list when a filter excludes
-everything, so a wrong `ASANA_WORKSPACES` or JQL is indistinguishable from "you
-have no work" unless something says so out loud. When you see it, check the
-filters, not the token.
+### Toggl Track, through the extension
 
-From the terminal:
+The featured card carries a real Toggl Track button when you have the browser
+extension — and only then. There is no Toggl API token anywhere in dayplan.
 
-```bash
-dayplan status          # one line per integration, with the error text
-dayplan status --json
-dayplan log -n 20       # recent sync attempts, newest first
-dayplan log -s asana
+It works because the extension ships a generic integration, listed in its
+settings as **DOM Integration**, that turns any `.toggl-root` element into a
+timer button using `data-*` attributes. dayplan renders the empty slot and the
+extension fills it, tracking through its own session. With no extension the
+slot stays empty and `:empty` collapses it, so nothing shows.
+
+One-time setup: in the extension's settings, under permissions, add dayplan's
+host under **Custom Domain permissions** and pick **DOM Integration**, then
+grant the permission.
+
+Only the featured card gets a button, because that is the task you are
+tracking. `deploy/toggl-projects.example.json` maps tasks onto Toggl project
+ids:
+
+```json
+{
+  "asana": [{ "project_contains": "Open Path", "toggl_project_id": 197054431 }],
+  "jira":  [{ "parent": "ALHM-7", "toggl_project_id": 209356898 },
+            { "key_prefix": "TN", "toggl_project_id": 182545135 }]
+}
 ```
 
-### The next task
-
-The first task in the plan that is not yet done is highlighted as **next** —
-the one to work on right now. It carries a `NEXT` badge and is named in the
-panel header. Nothing sets it by hand: it is derived from your ordering, so it
-advances on its own as you tick tasks off or drag something above it.
-
-- Drag a card from Pending into Plan to schedule it, at the position you drop it.
-- Drag within Plan to reorder.
-- Drag back out to Pending to unschedule it.
-- The checkbox, the minutes box and the note field on a planned card save on change.
-- `‹` `›` and the date picker move between days. Keys: `/` focus filter, `s` sync, `t` today.
+Matchers are `project_contains`, `title_contains`, `parent` (a Jira epic key),
+`key_prefix` and `tag`; all of those present in a rule must hold. First match
+wins in file order, so put epic rules above project-key rules. Anything
+unmatched gets no project rather than a guessed one. Resolution happens at
+**sync** time, where the Jira epic and Asana project are still available, so
+editing the map means re-syncing. `dayplan doctor` prints how many rules
+loaded.
 
 ## CLI
 
@@ -358,33 +369,32 @@ dayplan doctor                          # what is configured
 dayplan sync                            # pull everything
 dayplan sync -s jira                    # pull one source
 
-dayplan list                            # everything open
-dayplan list --pending -s jira          # unscheduled Jira only
+dayplan list                            # the list, in order, ▶ marks current
+dayplan list -s jira                    # one source
 dayplan list -q invoice --json          # search, machine readable
+dayplan new                             # untriaged arrivals
 dayplan show '#12'
 
-dayplan add '#12' TN-1171 --day today   # schedule, appended
-dayplan add '#12' --day tomorrow --pos 0
-dayplan order today '#12' TN-1171 '#9'  # set the exact order
-dayplan move '#12' --day +1 --pos 2
-dayplan drop '#12'                      # back to pending
+dayplan order '#12' TN-1171 '#9'        # pin these, in this order
+dayplan top '#12'                       # make it the current task
+dayplan unpin '#12'                     # back to the default order
+dayplan keep '#12'                      # accept a new task into the list
+dayplan dismiss '#12'                   # send it back to the new pile
 
 dayplan note '#12' 'check the logs first'
 dayplan est '#12' 45
 dayplan done '#12'                      # local only
 dayplan done '#12' --undo
 
-dayplan next                            # just the one to work on now
-dayplan next --json                     # same, for an agent
-dayplan today                           # the ordered plan, ▶ marks next
-dayplan plan tomorrow
+dayplan current                         # just the one to work on now
+dayplan current --json                  # same, for an agent
 dayplan summary                         # JSON snapshot, for an agent
 dayplan summary --text
 ```
 
-`dayplan order` only needs the tasks you care about: anything already on that
-day that you leave out keeps its relative order and is appended after, so a
-partial reorder never silently drops work.
+`dayplan order` only needs the tasks you care about: anything already pinned
+that you leave out keeps its relative order and follows after, so a partial
+reorder never silently drops work.
 
 ## HTTP API
 
@@ -392,16 +402,17 @@ partial reorder never silently drops work.
 
 | Method | Path | Does |
 | --- | --- | --- |
-| `GET` | `/api/state?day=YYYY-MM-DD` | everything the UI needs in one call, including `next` |
+| `GET` | `/api/state` | everything the UI needs: `tasks`, `new`, `current` |
 | `GET` | `/api/tasks?source=&day=&unplanned=&q=` | filtered task list |
-| `GET` | `/api/summary?day=` | workload snapshot, including `next` |
+| `GET` | `/api/summary` | workload snapshot, including `current` |
 | `GET` | `/api/integrations?history=` | per-source health, state and last error |
 | `GET` | `/api/sync-log?limit=&source=` | raw recent sync attempts |
 | `POST` | `/api/sync` | pull now, body `{"sources": ["jira"]}` optional |
-| `PUT` | `/api/plan/{day}/order` | body `{"ids": [...]}`, sets the order |
-| `POST` | `/api/plan/{day}/tasks` | body `{"task_id": "...", "position": 0}` |
-| `DELETE` | `/api/plan/tasks/{task_id}` | unschedule |
-| `PATCH` | `/api/tasks/{task_id}/plan` | body `{"note", "est_minutes", "done", "day"}` |
+| `PUT` | `/api/order` | body `{"ids": [...]}`, pins that prefix in that order |
+| `DELETE` | `/api/order/{task_id}` | unpin, keeping the note and estimate |
+| `POST` | `/api/accept` | body `{"task_id"}`, new → list |
+| `POST` | `/api/dismiss` | body `{"task_id"}`, list → new |
+| `PATCH` | `/api/tasks/{task_id}/plan` | body `{"note", "est_minutes", "done"}` |
 | `GET` | `/api/health` | liveness + configured sources |
 
 A failing provider never takes the others down: `/api/sync` returns per-source

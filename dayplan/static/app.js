@@ -2,9 +2,11 @@
 
 const el = (id) => document.getElementById(id);
 const list = el("task-list");
+const newList = el("new-list");
 
 const state = {
   tasks: [],
+  fresh: [],
   current: null,
   integrations: [],
   filterText: "",
@@ -206,6 +208,24 @@ function buildCard(task, rank, isFeatured = false) {
 
   const side = document.createElement("div");
   side.className = "side";
+  if (task.zone === "new") {
+    const accept = document.createElement("button");
+    accept.className = "iconbtn accept";
+    accept.textContent = "→";
+    accept.title = "Keep: move into the list";
+    accept.addEventListener("click", async () => {
+      try {
+        await api("/api/accept", {
+          method: "POST",
+          body: JSON.stringify({ task_id: task.id }),
+        });
+        await load();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+    side.appendChild(accept);
+  }
   // The Toggl button belongs only to the task being worked on.
   if (isFeatured) side.appendChild(togglSlot(task));
   const check = document.createElement("input");
@@ -242,20 +262,11 @@ function buildCard(task, rank, isFeatured = false) {
   return card;
 }
 
-function visibleTasks() {
-  const needle = state.filterText.trim().toLowerCase();
-  return state.tasks.filter((task) => {
-    if (state.hiddenSources.has(task.source)) return false;
-    if (!needle) return true;
-    const hay = `${task.title} ${task.project || ""} ${(task.tags || []).join(" ")}`;
-    return hay.toLowerCase().includes(needle);
-  });
-}
-
 function renderChips() {
   const chips = el("source-chips");
   chips.replaceChildren();
-  for (const source of [...new Set(state.tasks.map((t) => t.source))].sort()) {
+  const sources = new Set([...state.tasks, ...state.fresh].map((t) => t.source));
+  for (const source of [...sources].sort()) {
     const chip = document.createElement("button");
     chip.className = `chip${state.hiddenSources.has(source) ? "" : " on"}`;
     chip.textContent = source;
@@ -268,14 +279,23 @@ function renderChips() {
   }
 }
 
+function matchesFilter(task) {
+  if (state.hiddenSources.has(task.source)) return false;
+  const needle = state.filterText.trim().toLowerCase();
+  if (!needle) return true;
+  const hay = `${task.title} ${task.project || ""} ${(task.tags || []).join(" ")}`;
+  return hay.toLowerCase().includes(needle);
+}
+
 function render() {
-  const tasks = visibleTasks();
+  const tasks = state.tasks.filter(matchesFilter);
+  const fresh = state.fresh.filter(matchesFilter);
 
   list.replaceChildren();
   if (!tasks.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = state.tasks.length ? "Nothing matches." : "Nothing in the list.";
+    empty.textContent = state.tasks.length ? "Nothing matches." : "Nothing in the list yet.";
     list.appendChild(empty);
   } else {
     let dividerDone = !tasks.some((t) => t.pinned);
@@ -292,12 +312,26 @@ function render() {
     });
   }
 
+  newList.replaceChildren();
+  if (!fresh.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = state.fresh.length ? "Nothing matches." : "Nothing new.";
+    newList.appendChild(empty);
+  } else {
+    fresh.forEach((task) => newList.appendChild(buildCard(task, "", false)));
+  }
+
   renderChips();
   renderIntegrations();
   el("list-count").textContent =
     tasks.length === state.tasks.length
       ? `${tasks.length}`
       : `${tasks.length} / ${state.tasks.length}`;
+  el("new-count").textContent =
+    fresh.length === state.fresh.length
+      ? `${fresh.length}`
+      : `${fresh.length} / ${state.fresh.length}`;
 
   const open = state.tasks.filter((t) => !t.done);
   const overdue = open.filter((t) => t.overdue).length;
@@ -324,6 +358,7 @@ async function load() {
   try {
     const data = await api("/api/state");
     state.tasks = data.tasks;
+    state.fresh = data.new || [];
     state.current = data.current;
     state.integrations = data.integrations || [];
     render();
@@ -366,35 +401,42 @@ async function commitOrder(draggedId) {
 
 /* ---------------------------------------------------------- drag and drop */
 
-function cardAfterPoint(y) {
-  for (const card of list.querySelectorAll(".card:not(.dragging)")) {
+function cardAfterPoint(container, y) {
+  for (const card of container.querySelectorAll(".card:not(.dragging)")) {
     const box = card.getBoundingClientRect();
     if (y < box.top + box.height / 2) return card;
   }
   return null;
 }
 
-list.addEventListener("dragover", (event) => {
-  if (!state.dragId) return;
-  event.preventDefault();
-  event.dataTransfer.dropEffect = "move";
-  list.classList.add("dropping");
-  const dragged = list.querySelector(`.card[data-id="${CSS.escape(state.dragId)}"]`);
-  if (!dragged) return;
-  const reference = cardAfterPoint(event.clientY);
-  if (reference) list.insertBefore(dragged, reference);
-  else list.appendChild(dragged);
-});
+function wireDropTarget(container) {
+  container.addEventListener("dragover", (event) => {
+    if (!state.dragId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    container.classList.add("dropping");
+    const dragged = document.querySelector(`.card[data-id="${CSS.escape(state.dragId)}"]`);
+    if (!dragged) return;
+    const placeholder = container.querySelector(".empty");
+    if (placeholder) placeholder.remove();
+    const reference = cardAfterPoint(container, event.clientY);
+    if (reference) container.insertBefore(dragged, reference);
+    else container.appendChild(dragged);
+  });
 
-list.addEventListener("dragleave", (event) => {
-  if (!list.contains(event.relatedTarget)) list.classList.remove("dropping");
-});
+  container.addEventListener("dragleave", (event) => {
+    if (!container.contains(event.relatedTarget)) container.classList.remove("dropping");
+  });
 
-list.addEventListener("drop", (event) => {
-  event.preventDefault();
-  list.classList.remove("dropping");
-  state.dropped = true;
-});
+  container.addEventListener("drop", (event) => {
+    event.preventDefault();
+    container.classList.remove("dropping");
+    state.dropped = true;
+  });
+}
+
+wireDropTarget(list);
+wireDropTarget(newList);
 
 document.addEventListener("dragstart", (event) => {
   const card = event.target.closest?.(".card");
@@ -411,17 +453,38 @@ document.addEventListener("dragend", async (event) => {
   const draggedId = state.dragId;
   state.dragId = null;
   list.classList.remove("dropping");
+  newList.classList.remove("dropping");
   if (card) card.classList.remove("dragging");
   if (!draggedId) return;
 
-  // Cancelled drag (Escape, or dropped outside the list): undo the preview.
+  // Cancelled drag (Escape, or dropped outside a list): undo the preview.
   if (!state.dropped) {
     render();
     return;
   }
   state.dropped = false;
+
+  const wasNew = state.fresh.some((task) => task.id === draggedId);
+  const nowInNew = newList.contains(card);
+
   try {
-    await commitOrder(draggedId);
+    if (nowInNew) {
+      // Dragged into the new pile: untriage it. Ordering the pile is
+      // meaningless, so a new-to-new drag is a no-op.
+      if (!wasNew) {
+        await api("/api/dismiss", {
+          method: "POST",
+          body: JSON.stringify({ task_id: draggedId }),
+        });
+      } else {
+        render();
+        return;
+      }
+    } else {
+      // Landing in the main list pins the prefix, which also accepts a new
+      // task in one move: it comes out of the pile with a real position.
+      await commitOrder(draggedId);
+    }
     await load();
   } catch (error) {
     toast(error.message, true);

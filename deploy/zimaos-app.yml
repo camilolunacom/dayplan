@@ -50,6 +50,12 @@ services:
             - type: bind
               source: /DATA/AppData/dayplan/data
               target: /data
+            # DAYPLAN_CONFIG_DIR is /config in the image; this is where
+            # toggl-projects.json lives. Read-only: the app never writes here.
+            - type: bind
+              source: /DATA/config/dayplan
+              target: /config
+              read_only: true
         x-casaos:
             image: ""
             ports:
@@ -59,7 +65,10 @@ services:
             volumes:
                 - container: /data
                   description:
-                    en_US: SQLite cache and your day plan
+                    en_US: SQLite cache and your ordered list
+                - container: /config
+                  description:
+                    en_US: tokens and the Toggl project map (read-only)
 networks:
     default:
         name: dayplan_default
