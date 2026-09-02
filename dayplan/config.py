@@ -53,6 +53,7 @@ class Config:
     asana_token: str | None
     asana_workspaces: tuple[str, ...]
     jira_base_url: str | None
+    jira_site_url: str | None
     jira_email: str | None
     jira_api_token: str | None
     jira_jql: str
@@ -89,6 +90,16 @@ def load_config() -> Config:
     if base_url:
         base_url = base_url.rstrip("/")
 
+    # Scoped API tokens must be used against https://api.atlassian.com/ex/jira/<cloudId>
+    # rather than the site URL. That gateway address is no good for building
+    # human-facing /browse/ links, so keep the site URL separately. If it is
+    # not set we ask Jira for it (GET /rest/api/3/serverInfo).
+    site_url = os.environ.get("JIRA_SITE_URL") or None
+    if site_url:
+        site_url = site_url.rstrip("/")
+    elif base_url and "api.atlassian.com" not in base_url:
+        site_url = base_url
+
     default_db = DATA_DIR / "dayplan.sqlite"
     return Config(
         db_path=Path(os.environ.get("DAYPLAN_DB", default_db)).expanduser(),
@@ -97,6 +108,7 @@ def load_config() -> Config:
         asana_token=os.environ.get("ASANA_TOKEN") or None,
         asana_workspaces=workspaces,
         jira_base_url=base_url,
+        jira_site_url=site_url,
         jira_email=os.environ.get("JIRA_EMAIL") or None,
         jira_api_token=os.environ.get("JIRA_API_TOKEN") or None,
         jira_jql=os.environ.get("JIRA_JQL") or DEFAULT_JIRA_JQL,

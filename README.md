@@ -36,7 +36,8 @@ local run) and fill it in.
 | `TICKTICK_TOKEN` | TickTick Open API access token |
 | `ASANA_TOKEN` | Asana Personal Access Token, https://app.asana.com/0/my-apps |
 | `ASANA_WORKSPACES` | optional, comma-separated workspace gids to limit to |
-| `JIRA_BASE_URL` | `https://your-site.atlassian.net` |
+| `JIRA_BASE_URL` | site URL, or the gateway for a scoped token — see below |
+| `JIRA_SITE_URL` | optional, only for issue links when using the gateway |
 | `JIRA_EMAIL` | the account the token belongs to |
 | `JIRA_API_TOKEN` | https://id.atlassian.com/manage-profile/security/api-tokens |
 | `JIRA_JQL` | optional, overrides the default filter |
@@ -59,6 +60,44 @@ jq -r .access_token ~/.config/ticktick-cli/config.json
 Paste that value into `TICKTICK_TOKEN`. These tokens are long-lived but not
 eternal (roughly six months), and there is no refresh path in this app: when
 TickTick starts returning 401, repeat the two commands above.
+
+### Which Jira token, and which scopes
+
+Atlassian offers two kinds of API token. Both authenticate identically (HTTP
+Basic, `email:token`) — **the only difference is the base URL**, which is why
+picking the wrong one produces confusing 401s.
+
+**Token without scopes.** There are no scopes to choose: it is a password
+replacement that carries your full account permissions. Point
+`JIRA_BASE_URL` at the site:
+
+```
+JIRA_BASE_URL=https://your-site.atlassian.net
+```
+
+**Token with scopes.** Grant exactly two, both read-only:
+
+| Scope | Needed for |
+| --- | --- |
+| `read:jira-work` | `POST /rest/api/3/search/jql`, the issue search |
+| `read:jira-user` | `GET /rest/api/3/myself`, the credential check |
+
+(The granular equivalent of `read:jira-user` is `read:user:jira`.) A scoped
+token **must** go through the gateway, not the site:
+
+```
+JIRA_BASE_URL=https://api.atlassian.com/ex/jira/<your-cloud-id>
+```
+
+That is the cloudId for `your-site`. Scopes are fixed at creation — to change
+them you create a new token.
+
+This is the better choice for dayplan, because v1 never writes: a token
+holding only those two scopes cannot modify Jira even if it leaks. The
+gateway address cannot build `/browse/` links, so dayplan asks Jira for the
+real site URL via `/serverInfo`; set `JIRA_SITE_URL` to skip that call.
+
+`dayplan doctor` prints which mode it detected.
 
 ### Jira default filter
 

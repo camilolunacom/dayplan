@@ -116,6 +116,9 @@ def doctor() -> None:
     workspaces = ", ".join(cfg.asana_workspaces) or "all visible"
     typer.echo(f"  workspaces    {workspaces}")
     typer.echo(f"jira            {'ok' if cfg.jira_ready else 'MISSING'}  ({cfg.jira_base_url or 'JIRA_BASE_URL unset'})")
+    scoped = bool(cfg.jira_base_url and "api.atlassian.com" in cfg.jira_base_url)
+    typer.echo(f"  token type    {'scoped (needs read:jira-work + read:jira-user)' if scoped else 'unscoped / site URL'}")
+    typer.echo(f"  links via     {cfg.jira_site_url or 'resolved from /serverInfo at sync time'}")
     typer.echo(f"  jql           {cfg.jira_jql}")
     enabled = cfg.enabled_sources()
     typer.echo(f"enabled         {', '.join(enabled) if enabled else 'none'}")
