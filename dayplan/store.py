@@ -9,16 +9,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .config import Config
-from .dates import days_from_today, today_str
+from .dates import days_from_today
 from .db import connect, set_meta
 from .providers import SOURCES, RemoteTask, fetch_all
 from .toggl import load_rules as load_toggl_rules
 from .toggl import resolve as resolve_toggl
 
-# One list, ordered by hand. `plan.day` keeps this sentinel for every row: the
-# per-day buckets are gone, the list itself is the priority order.
-LIST = "list"
-BACKLOG = "backlog"
+# One list, ordered by hand: the list itself is the priority order.
 
 
 def _now() -> str:
@@ -192,7 +189,7 @@ def sync(
 TASK_SELECT = """
 SELECT t.id, t.ref, t.source, t.external_id, t.title, t.url, t.project, t.status,
        t.priority, t.due, t.tags, t.notes, t.toggl_project_id, t.closed, t.closed_at, t.first_seen,
-       p.day AS plan_day, p.position AS plan_position
+       p.task_id AS plan_row, p.position AS plan_position
 FROM tasks t
 LEFT JOIN plan p ON p.task_id = t.id
 """
@@ -219,7 +216,6 @@ def _row_to_task(row: sqlite3.Row) -> dict[str, Any]:
         "closed": bool(row["closed"]),
         "closed_at": row["closed_at"],
         "first_seen": row["first_seen"],
-        "day": row["plan_day"],
         "position": row["plan_position"],
         # Three zones, all derived from the plan row:
         #   ordered    a manual position -> he arranged it
@@ -227,7 +223,7 @@ def _row_to_task(row: sqlite3.Row) -> dict[str, Any]:
         #   new        no row at all -> arrived from a sync, untriaged
         "zone": (
             "new"
-            if row["plan_day"] is None
+            if row["plan_row"] is None
             else ("ordered" if row["plan_position"] is not None else "unordered")
         ),
     }
@@ -279,9 +275,9 @@ def acknowledge(conn: sqlite3.Connection, task_id: str) -> None:
     if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
         raise ResolveError(f"unknown task id {task_id!r}")
     conn.execute(
-        "INSERT INTO plan(task_id, day, position, updated_at) VALUES(?, ?, NULL, ?) "
+        "INSERT INTO plan(task_id, position, updated_at) VALUES(?, NULL, ?) "
         "ON CONFLICT(task_id) DO NOTHING",
-        (task_id, LIST, _now()),
+        (task_id, _now()),
     )
     conn.commit()
 
@@ -292,11 +288,10 @@ def unacknowledge(conn: sqlite3.Connection, task_id: str) -> None:
     This drops the plan row, so it loses its place in the order — that is the
     point: the task returns to being untriaged.
     """
-    row = conn.execute("SELECT day FROM plan WHERE task_id = ?", (task_id,)).fetchone()
-    if not row:
+    if not conn.execute("SELECT 1 FROM plan WHERE task_id = ?", (task_id,)).fetchone():
         return
     conn.execute("DELETE FROM plan WHERE task_id = ?", (task_id,))
-    _rewrite(conn, row["day"], _positions(conn, row["day"]))
+    _renumber(conn, _positions(conn))
     conn.commit()
 
 
@@ -304,8 +299,6 @@ def list_tasks(
     conn: sqlite3.Connection,
     *,
     source: str | None = None,
-    day: str | None = None,
-    unplanned: bool = False,
     include_closed: bool = False,
     query: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -316,12 +309,6 @@ def list_tasks(
     if source:
         clauses.append("t.source = ?")
         params.append(source)
-    if day:
-        clauses.append("p.day = ?")
-        params.append(day)
-    if unplanned:
-        clauses.append("(p.day IS NULL OR p.day = ?)")
-        params.append(BACKLOG)
     if query:
         clauses.append("(LOWER(t.title) LIKE ? OR LOWER(COALESCE(t.project, '')) LIKE ?)")
         needle = f"%{query.lower()}%"
@@ -332,11 +319,7 @@ def list_tasks(
         sql += " WHERE " + " AND ".join(clauses)
 
     tasks = [_row_to_task(row) for row in conn.execute(sql, params).fetchall()]
-
-    if day:
-        tasks.sort(key=lambda t: (t["position"] if t["position"] is not None else 1 << 30))
-    else:
-        tasks.sort(key=_sort_key)
+    tasks.sort(key=_sort_key)
     return tasks
 
 
@@ -391,50 +374,49 @@ def resolve(conn: sqlite3.Connection, token: str) -> str:
 # --------------------------------------------------------------------------- plan writes
 
 
-def _positions(conn: sqlite3.Connection, day: str) -> list[str]:
-    """Task ids that have a manual position, in order. NULL positions are not
-    part of the ordering and must not be renumbered into it."""
+def _positions(conn: sqlite3.Connection) -> list[str]:
+    """Task ids that carry a manual position, in that order.
+
+    Rows with position NULL are in the list but unranked, so they are not part
+    of the ordering and must never be renumbered into it.
+    """
     rows = conn.execute(
-        "SELECT task_id FROM plan WHERE day = ? AND position IS NOT NULL ORDER BY position",
-        (day,),
+        "SELECT task_id FROM plan WHERE position IS NOT NULL ORDER BY position"
     ).fetchall()
     return [row["task_id"] for row in rows]
 
 
-def _rewrite(conn: sqlite3.Connection, day: str, ids: list[str]) -> None:
+def _renumber(conn: sqlite3.Connection, ids: list[str]) -> None:
+    """Write 0..n-1 across exactly these ids, in this order."""
     now = _now()
     conn.executemany(
-        "UPDATE plan SET position = ?, day = ?, updated_at = ? WHERE task_id = ?",
-        [(index, day, now, task_id) for index, task_id in enumerate(ids)],
+        "UPDATE plan SET position = ?, updated_at = ? WHERE task_id = ?",
+        [(index, now, task_id) for index, task_id in enumerate(ids)],
     )
+
+
+UPSERT_POSITION = (
+    "INSERT INTO plan(task_id, position, updated_at) VALUES(?, ?, ?) "
+    "ON CONFLICT(task_id) DO UPDATE SET position = excluded.position, "
+    "updated_at = excluded.updated_at"
+)
 
 
 def assign(
-    conn: sqlite3.Connection, task_id: str, day: str, position: int | None = None
+    conn: sqlite3.Connection, task_id: str, position: int | None = None
 ) -> dict[str, Any]:
-    """Put a task on a day. position is a 0-based index; None appends."""
+    """Give a task a manual position. 0-based; None appends to the ranked head."""
     if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
         raise ResolveError(f"unknown task id {task_id!r}")
 
-    current = conn.execute("SELECT day FROM plan WHERE task_id = ?", (task_id,)).fetchone()
-    old_day = current["day"] if current else None
-
-    order = [t for t in _positions(conn, day) if t != task_id]
+    order = [t for t in _positions(conn) if t != task_id]
     index = len(order) if position is None else max(0, min(int(position), len(order)))
     order.insert(index, task_id)
 
-    now = _now()
-    conn.execute(
-        "INSERT INTO plan(task_id, day, position, updated_at) VALUES(?, ?, ?, ?) "
-        "ON CONFLICT(task_id) DO UPDATE SET day = excluded.day, position = excluded.position, "
-        "updated_at = excluded.updated_at",
-        (task_id, day, index, now),
-    )
-    _rewrite(conn, day, order)
-    if old_day and old_day != day:
-        _rewrite(conn, old_day, _positions(conn, old_day))
+    conn.execute(UPSERT_POSITION, (task_id, index, _now()))
+    _renumber(conn, order)
     conn.commit()
-    return {"task_id": task_id, "day": day, "position": index}
+    return {"task_id": task_id, "position": index}
 
 
 def unassign(conn: sqlite3.Connection, task_id: str) -> None:
@@ -443,53 +425,37 @@ def unassign(conn: sqlite3.Connection, task_id: str) -> None:
     The row itself stays, so the task remains part of the list rather than
     falling back into the new pile.
     """
-    row = conn.execute("SELECT day FROM plan WHERE task_id = ?", (task_id,)).fetchone()
-    if not row:
+    if not conn.execute("SELECT 1 FROM plan WHERE task_id = ?", (task_id,)).fetchone():
         return
     conn.execute(
         "UPDATE plan SET position = NULL, updated_at = ? WHERE task_id = ?", (_now(), task_id)
     )
-    _rewrite(conn, row["day"], _positions(conn, row["day"]))
+    _renumber(conn, _positions(conn))
     conn.commit()
 
 
-def set_order(conn: sqlite3.Connection, day: str, ids: list[str]) -> list[str]:
-    """Set the exact order of a day. Ids not yet on that day are moved onto it.
+def set_order(conn: sqlite3.Connection, ids: list[str]) -> list[str]:
+    """Pin these ids as the ranked head of the list, in this order.
 
-    Tasks already on the day but missing from `ids` keep their relative order
-    and are appended after, so a partial reorder never silently drops anything.
+    Already-ranked tasks left out of `ids` keep their relative order and
+    follow after, so a partial reorder never silently drops work.
     """
-    known = []
+    known: list[str] = []
     for task_id in ids:
         if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
             raise ResolveError(f"unknown task id {task_id!r}")
         if task_id not in known:
             known.append(task_id)
 
-    leftovers = [t for t in _positions(conn, day) if t not in known]
+    leftovers = [t for t in _positions(conn) if t not in known]
     final = known + leftovers
 
     now = _now()
-    moved_from: set[str] = set()
-    for task_id in known:
-        row = conn.execute("SELECT day FROM plan WHERE task_id = ?", (task_id,)).fetchone()
-        if row and row["day"] != day:
-            moved_from.add(row["day"])
     conn.executemany(
-        "INSERT INTO plan(task_id, day, position, updated_at) VALUES(?, ?, ?, ?) "
-        "ON CONFLICT(task_id) DO UPDATE SET day = excluded.day, position = excluded.position, "
-        "updated_at = excluded.updated_at",
-        [(task_id, day, index, now) for index, task_id in enumerate(final)],
+        UPSERT_POSITION, [(task_id, index, now) for index, task_id in enumerate(final)]
     )
-    for other in moved_from:
-        _rewrite(conn, other, _positions(conn, other))
     conn.commit()
     return final
-
-
-def set_list_order(conn: sqlite3.Connection, ids: list[str]) -> list[str]:
-    """Pin these ids to the head of the single list, in this order."""
-    return set_order(conn, LIST, ids)
 
 
 def next_task(plan: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -502,7 +468,7 @@ def next_task(plan: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def current_task(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    """The featured task: first in the list that is not ticked off."""
+    """The featured task: the head of the list."""
     return next_task(ordered_tasks(conn))
 
 
@@ -599,8 +565,7 @@ def sync_log(conn: sqlite3.Connection, limit: int = 30, source: str | None = Non
     return out
 
 
-def summary(conn: sqlite3.Connection, day: str | None = None) -> dict[str, Any]:
-    day = day or today_str()
+def summary(conn: sqlite3.Connection) -> dict[str, Any]:
     tasks = ordered_tasks(conn)
     fresh = new_tasks(conn)
 
@@ -616,7 +581,6 @@ def summary(conn: sqlite3.Connection, day: str | None = None) -> dict[str, Any]:
         last_sync[row["key"].split(":", 1)[1]] = row["value"]
 
     return {
-        "day": day,
         "current": next_task(tasks),
         "tasks": tasks,
         "count": len(tasks),

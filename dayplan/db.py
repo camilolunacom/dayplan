@@ -30,18 +30,16 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(source);
 CREATE INDEX IF NOT EXISTS idx_tasks_closed ON tasks(closed);
 
--- What is his rather than the providers': the order. A row with position NULL
--- means "seen, not ranked", which is what separates the list from the new
--- pile. `day` is a leftover from the per-day model and now always holds
--- 'list'.
+-- What is his rather than the providers': the order. The row existing means
+-- "in the list"; position NULL means "seen, not ranked". No row at all means
+-- the task is still in the new pile.
 CREATE TABLE IF NOT EXISTS plan (
     task_id      TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
-    day          TEXT NOT NULL,
     position     INTEGER,             -- NULL = default order
     updated_at   TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_plan_day ON plan(day, position);
+CREATE INDEX IF NOT EXISTS idx_plan_position ON plan(position);
 
 -- One row per source per sync attempt, so the dashboard can show what each
 -- integration is actually doing instead of just how many tasks it has.
@@ -107,6 +105,8 @@ def _migrate_days_into_one_list(conn: sqlite3.Connection) -> None:
     that means nothing. Move them onto the list, keeping their relative
     sequence, and renumber from zero.
     """
+    if "day" not in {row["name"] for row in conn.execute("PRAGMA table_info(plan)")}:
+        return  # already collapsed, or a database created after `day` was dropped
     stale = conn.execute("SELECT COUNT(*) AS n FROM plan WHERE day != 'list'").fetchone()["n"]
     if not stale:
         return
@@ -129,6 +129,21 @@ def _migrate_days_into_one_list(conn: sqlite3.Connection) -> None:
 # clear: an estimate nobody fills in is noise, a local done tick never reached
 # the source so the next sync undid it, and a note is not what this app is for.
 DROPPED_PLAN_COLUMNS = ("est_minutes", "done_local", "note")
+
+
+def _drop_plan_day(conn: sqlite3.Connection) -> None:
+    """Retire `day`, which every row now sets to the same literal.
+
+    Runs after _migrate_days_into_one_list has folded the dated buckets in, so
+    by here the column carries no information. SQLite refuses to drop an
+    indexed column, hence dropping idx_plan_day first.
+    """
+    if "day" not in {row["name"] for row in conn.execute("PRAGMA table_info(plan)")}:
+        return
+    conn.execute("DROP INDEX IF EXISTS idx_plan_day")
+    conn.execute("ALTER TABLE plan DROP COLUMN day")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_plan_position ON plan(position)")
+    conn.commit()
 
 
 def _drop_unused_plan_columns(conn: sqlite3.Connection) -> None:
@@ -168,6 +183,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     _migrate_plan_position_nullable(conn)
     _migrate_days_into_one_list(conn)
     _drop_unused_plan_columns(conn)
+    _drop_plan_day(conn)
     return conn
 
 

@@ -142,7 +142,7 @@ def create_app() -> FastAPI:
         if not isinstance(ids, list):
             raise HTTPException(status_code=400, detail="body needs an 'ids' array")
         try:
-            final = store.set_list_order(conn, [str(i) for i in ids])
+            final = store.set_order(conn, [str(i) for i in ids])
         except store.ResolveError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"ids": final}

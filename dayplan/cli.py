@@ -17,7 +17,7 @@ from .toggl import load_rules as load_toggl_rules
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
-    help="Pull tasks from TickTick, Asana and Jira; order them; plan the day.",
+    help="Pull tasks from TickTick, Asana and Jira into one hand-ordered list.",
 )
 
 SOURCE_WIDTH = 8
@@ -315,7 +315,7 @@ def order(refs: list[str] = typer.Argument(..., help="Refs in the order you want
     """
     conn = _conn()
     try:
-        store.set_list_order(conn, _resolve_many(conn, refs))
+        store.set_order(conn, _resolve_many(conn, refs))
         tasks = store.ordered_tasks(conn)
     finally:
         conn.close()
@@ -329,7 +329,7 @@ def top(ref: str) -> None:
     try:
         task_id = _resolve_many(conn, [ref])[0]
         pinned = [t["id"] for t in store.ordered_tasks(conn) if t["pinned"]]
-        store.set_list_order(conn, [task_id] + [i for i in pinned if i != task_id])
+        store.set_order(conn, [task_id] + [i for i in pinned if i != task_id])
         tasks = store.ordered_tasks(conn)
     finally:
         conn.close()
