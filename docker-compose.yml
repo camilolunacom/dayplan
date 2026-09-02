@@ -4,16 +4,49 @@ services:
     image: dayplan:0.1.0
     container_name: dayplan
     restart: unless-stopped
+
+    # The other TSDProxy-exposed apps on this host all sit on the default
+    # bridge, and the proxy is configured with targetHostname:
+    # host.docker.internal -- meaning it reaches apps through the host's
+    # published port, not the container IP. So both of these are required
+    # for TSDProxy to find dayplan.
+    network_mode: bridge
     ports:
-      # Bound to all interfaces so you can reach it from the LAN.
-      # dayplan has no authentication, so keep this off the public internet.
+      # Also the plain LAN entrance, which has no authentication at all.
+      # Reach it through Tailscale instead; never forward this port.
       - "8787:8787"
-    env_file:
-      - .env
+
+    labels:
+      tsdproxy.enable: "true"
+      tsdproxy.name: "dash"
+      tsdproxy.port.1: "443/https:8787/http"
+      # Tailnet-only. Funnel would publish this to the whole internet, and
+      # dayplan has no authentication of its own.
+      tsdproxy.funnel: "false"
+
     environment:
+      # Secrets are named here but never stored here: Compose interpolates them
+      # from the shell environment, or from the .env file sitting next to this
+      # one. This file is in git, .env is not, so do NOT paste values inline.
+      #
+      # ":-" means "default to empty", not "required": each provider is
+      # independently optional, and `dayplan doctor` reports what is missing.
+      TICKTICK_TOKEN: "${TICKTICK_TOKEN:-}"
+      TICKTICK_EXTRA_PROJECT_IDS: "${TICKTICK_EXTRA_PROJECT_IDS:-}"
+
+      ASANA_TOKEN: "${ASANA_TOKEN:-}"
+      ASANA_WORKSPACES: "${ASANA_WORKSPACES:-}"
+
+      JIRA_BASE_URL: "${JIRA_BASE_URL:-}"
+      JIRA_EMAIL: "${JIRA_EMAIL:-}"
+      JIRA_API_TOKEN: "${JIRA_API_TOKEN:-}"
+      JIRA_JQL: "${JIRA_JQL:-}"
+
       # Pull from every configured source every 15 minutes.
-      DAYPLAN_SYNC_INTERVAL_MINUTES: "15"
-      TZ: "America/Bogota"
+      DAYPLAN_SYNC_INTERVAL_MINUTES: "${DAYPLAN_SYNC_INTERVAL_MINUTES:-15}"
+      # dayplan decides what "today" means from the container clock.
+      TZ: "${TZ:-America/Bogota}"
+
     volumes:
       - dayplan-data:/data
 

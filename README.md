@@ -80,28 +80,63 @@ come in at priority 0. TickTick and Jira priorities are normalized to 0-3.
 
 ## Running it on the ZimaBlade
 
+It lives in `/DATA/AppData/dayplan` and is reached at
+**https://dash.your-tailnet.ts.net** over Tailscale.
+
 ```bash
-cp .env.example .env    # then fill in the three tokens
-docker compose up -d --build
-docker compose logs -f dayplan
+ssh zima
+cd /DATA/AppData/dayplan
+cp .env.example .env    # then fill in the tokens
+DOCKER_CONFIG=/DATA/.docker docker compose up -d --build
+DOCKER_CONFIG=/DATA/.docker docker compose logs -f dayplan
 ```
 
-Then open `http://<zimablade>:8787`.
+`DOCKER_CONFIG=/DATA/.docker` is not optional on ZimaOS: `/root` is a
+read-only filesystem, so the Docker CLI dies with
+`mkdir /root/.docker: read-only file system` without it. The first build takes
+about ten minutes on this hardware.
 
 The container keeps its SQLite file in the `dayplan-data` volume mounted at
-`/data`, so rebuilds do not lose your plan. `TZ` is set to `America/Bogota` in
-the compose file: dayplan decides what "today" means from the container clock,
-so if that is wrong every due date shifts by a day.
-
-**dayplan has no authentication.** Keep the published port on the LAN, or put
-it behind something that does auth. Do not expose 8787 to the internet.
+`/data`, so rebuilds do not lose your plan. `TZ` defaults to `America/Bogota`:
+dayplan decides what "today" means from the container clock, so if that is
+wrong every due date shifts by a day.
 
 To run the CLI against the hosted instance:
 
 ```bash
-docker compose exec dayplan dayplan today
-docker compose exec dayplan dayplan sync
+ssh zima 'docker exec dayplan dayplan today'
+ssh zima 'docker exec dayplan dayplan sync'
 ```
+
+### Tailscale exposure (TSDProxy)
+
+The compose labels hand the container to the TSDProxy instance already running
+on this host:
+
+```yaml
+tsdproxy.enable: "true"
+tsdproxy.name: "dash"
+tsdproxy.port.1: "443/https:8787/http"
+tsdproxy.funnel: "false"
+```
+
+Three things about that setup are easy to get wrong:
+
+- **`network_mode: bridge` plus a published port are both required.** This
+  TSDProxy is configured with `targetHostname: host.docker.internal`, so it
+  reaches apps through the *host's* published port, not the container IP. A
+  compose-created network would be unreachable.
+- **`tsdproxy.name` must be unique.** `dash` originally belonged to TSDProxy's
+  own dashboard; that was relabelled to `tsdproxy` (in
+  `/var/lib/casaos/apps/some-random-project/docker-compose.yml`) to free the name. The
+  config sets `preventDuplicates: true`, so a clash is rejected rather than
+  silently misrouted.
+- **Node state is keyed by name** at `datadir/<provider>/<name>/`. Because
+  `datadir/default/dash/` already existed, dayplan inherited the existing
+  tailnet node instead of being renamed to `dash-1`.
+
+Funnel is off, so this is tailnet-only. Leave it that way: dayplan has no
+authentication of its own, and neither does the LAN port on 8787.
 
 ## Running it locally
 
