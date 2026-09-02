@@ -145,9 +145,9 @@ def _collect_subtasks(
 
     Subtasks are not project members, so they never appear in a
     /tasks?project= listing and no section filter applies to them: they are
-    included because their parent matched. A subtask assigned to somebody else
-    is theirs, not his, so it is dropped -- but an unassigned subtask under his
-    parent is kept.
+    included because their parent matched. They still have to clear the same
+    two bars as any other task -- assigned to you and not completed -- so an
+    unassigned subtask under your parent does not come in.
     """
     if not cfg.asana_include_subtasks or not parent.get("num_subtasks"):
         return
@@ -157,8 +157,7 @@ def _collect_subtasks(
     for row in rows:
         if row.get("completed"):
             continue
-        assignee = _assignee_gid(row)
-        if assignee and my_gid and assignee != my_gid:
+        if cfg.asana_only_mine and _assignee_gid(row) != my_gid:
             continue
         task = _to_task(row, parent_task.project)
         # Carry the parent so a subtask does not read as an orphan item.
