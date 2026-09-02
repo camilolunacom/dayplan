@@ -122,7 +122,10 @@ repo's `docker-compose.yml` in four ways that all matter:
   pulls and ignores `pull_policy`, walking a chain of public mirrors and
   aborting when none has the image — so a bare local tag cannot be installed
   at all. `deploy/zimaos-registry.yml` runs a loopback registry (itself a
-  ZimaOS app) to serve it.
+  ZimaOS app, shown in the dashboard as *Image Registry*) to serve it. It is
+  permanent build infrastructure rather than something you use directly:
+  bound to `127.0.0.1:5000` only, and needed for every rebuild. Uninstalling
+  it deletes the stored images.
 - **`env_file: /DATA/config/dayplan/.env`**, outside `/DATA/AppData`.
 - **A bind mount** at `/DATA/AppData/dayplan/data` instead of a named volume.
 - **Both `x-casaos` blocks**, which is what produces the tile.

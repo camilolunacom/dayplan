@@ -61,6 +61,8 @@ x-casaos:
     scheme: http
     store_app_id: registry
     thumbnail: ""
+    tips:
+        custom: Build infrastructure, not an app you use. It stores images built on this host so ZimaOS can install them, because the installer always pulls from a registry. Uninstalling it deletes the stored images and blocks installing locally-built apps until they are pushed again.
     title:
         custom: Image Registry
         en_US: registry
