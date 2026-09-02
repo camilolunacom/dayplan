@@ -309,14 +309,18 @@ change what you are working on. Below the hand-ordered head, a divider marks
 the tasks you have seen but not ranked; those keep a stable order and never
 reshuffle themselves.
 
+There is no estimate field and no way to tick a task off here. An estimate
+nobody fills in is noise, and a local tick never reached the source, so the
+next sync just brought the task back. A task leaves the list by being closed
+where it lives; the sync notices and drops it.
+
 **New** is everything a sync brought in that you have never placed. It sits in
 its own column precisely so a sync cannot disturb an arrangement you already
 made. Drag one across (or hit `→`) to keep it; drag one back to untriage it,
-which discards its note and estimate.
+which discards its note.
 
 - Drag within the list to reorder; drag to the top to change the current task.
-- The checkbox, the minutes box and the note save on change. Empty notes
-  collapse to a `+ note` link so the rows stay short.
+- Notes save on change. Empty ones collapse to a `+ note` link so rows stay short.
 - Keys: `/` focus filter, `s` sync, `i` integration status, `Esc` close.
 
 Theming is [Flexoki](https://stephango.com/flexoki) and follows
@@ -382,9 +386,6 @@ dayplan keep '#12'                      # accept a new task into the list
 dayplan dismiss '#12'                   # send it back to the new pile
 
 dayplan note '#12' 'check the logs first'
-dayplan est '#12' 45
-dayplan done '#12'                      # local only
-dayplan done '#12' --undo
 
 dayplan current                         # just the one to work on now
 dayplan current --json                  # same, for an agent
@@ -409,10 +410,10 @@ reorder never silently drops work.
 | `GET` | `/api/sync-log?limit=&source=` | raw recent sync attempts |
 | `POST` | `/api/sync` | pull now, body `{"sources": ["jira"]}` optional |
 | `PUT` | `/api/order` | body `{"ids": [...]}`, pins that prefix in that order |
-| `DELETE` | `/api/order/{task_id}` | unpin, keeping the note and estimate |
+| `DELETE` | `/api/order/{task_id}` | unpin, keeping the note |
 | `POST` | `/api/accept` | body `{"task_id"}`, new → list |
 | `POST` | `/api/dismiss` | body `{"task_id"}`, list → new |
-| `PATCH` | `/api/tasks/{task_id}/plan` | body `{"note", "est_minutes", "done"}` |
+| `PATCH` | `/api/tasks/{task_id}/plan` | body `{"note"}` |
 | `GET` | `/api/health` | liveness + configured sources |
 
 A failing provider never takes the others down: `/api/sync` returns per-source

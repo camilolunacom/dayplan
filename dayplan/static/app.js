@@ -44,14 +44,6 @@ async function api(path, options = {}) {
   return response.status === 204 ? null : response.json();
 }
 
-function fmtMinutes(total) {
-  if (!total) return "0m";
-  const hours = Math.floor(total / 60);
-  const minutes = total % 60;
-  if (hours && minutes) return `${hours}h ${minutes}m`;
-  return hours ? `${hours}h` : `${minutes}m`;
-}
-
 function relativeTime(iso) {
   if (!iso) return "never";
   const then = new Date(iso).getTime();
@@ -90,36 +82,39 @@ function dueBadge(task) {
  * If the extension is absent or the domain is not mapped to DOM Integration in
  * its settings, the slot stays empty and `.toggl-slot:empty` collapses it.
  */
+// One slot element, reused across renders. render() rebuilds the whole list on
+// every load, and a fresh .toggl-root each time means the extension has to
+// notice and re-process it every single time — a race we do not need. Keeping
+// the node lets us only invalidate it when the featured task actually changes.
+let togglNode = null;
+let togglNodeTaskId = null;
+
 function togglSlot(task) {
-  const slot = document.createElement("span");
-  slot.className = "toggl-slot toggl-root";
-  slot.dataset.description = task.title;
+  if (!togglNode) {
+    togglNode = document.createElement("span");
+    togglNode.className = "toggl-slot toggl-root";
+  }
+  if (togglNodeTaskId !== task.id) {
+    // Different task: drop the button the extension built and the `toggl`
+    // marker it sets, so its `.toggl-root:not(.toggl)` selector matches again.
+    togglNode.replaceChildren();
+    togglNode.classList.remove("toggl");
+    togglNodeTaskId = task.id;
+  }
+  togglNode.dataset.description = task.title;
   // The numeric Toggl project id, resolved during sync from the project map.
   // Deliberately no data-project-name: an unmapped task should land in Toggl
   // with no project rather than inventing one from the source's own naming.
-  if (task.toggl_project_id) slot.dataset.projectId = String(task.toggl_project_id);
+  if (task.toggl_project_id) togglNode.dataset.projectId = String(task.toggl_project_id);
+  else delete togglNode.dataset.projectId;
   const tags = [task.source, ...(task.tags || [])].filter(Boolean);
-  if (tags.length) slot.dataset.tags = tags.join(",");
-  slot.dataset.className = "dayplan";
-  return slot;
+  if (tags.length) togglNode.dataset.tags = tags.join(",");
+  else delete togglNode.dataset.tags;
+  togglNode.dataset.className = "dayplan";
+  return togglNode;
 }
 
 /* --------------------------------------------------------------------- cards */
-
-function estInput(task) {
-  const est = document.createElement("input");
-  est.type = "number";
-  est.className = "est";
-  est.min = "0";
-  est.step = "5";
-  est.placeholder = "min";
-  est.title = "Estimate in minutes";
-  est.value = task.est_minutes ?? "";
-  est.addEventListener("change", () =>
-    patchTask(task.id, { est_minutes: Number(est.value) || 0 })
-  );
-  return est;
-}
 
 function noteBox(task, focus = false) {
   const note = document.createElement("textarea");
@@ -188,7 +183,6 @@ function buildCard(task, rank, isFeatured = false) {
   if (isFeatured) card.classList.add("featured");
   card.dataset.id = task.id;
   card.draggable = true;
-  if (task.done) card.classList.add("is-done");
 
   if (isFeatured) {
     const eyebrow = document.createElement("div");
@@ -228,13 +222,6 @@ function buildCard(task, rank, isFeatured = false) {
   }
   // The Toggl button belongs only to the task being worked on.
   if (isFeatured) side.appendChild(togglSlot(task));
-  const check = document.createElement("input");
-  check.type = "checkbox";
-  check.checked = task.done;
-  check.title = "Done (local only, does not push back)";
-  check.addEventListener("change", () => patchTask(task.id, { done: check.checked }));
-  side.appendChild(check);
-  side.appendChild(estInput(task));
   if (task.pinned) {
     const unpin = document.createElement("button");
     unpin.className = "iconbtn";
@@ -308,7 +295,7 @@ function render() {
         dividerDone = true;
       }
       // Position 1 is the task being worked on: same list, bigger card.
-      list.appendChild(buildCard(task, index + 1, index === 0 && !task.done));
+      list.appendChild(buildCard(task, index + 1, index === 0));
     });
   }
 
@@ -333,9 +320,9 @@ function render() {
       ? `${fresh.length}`
       : `${fresh.length} / ${state.fresh.length}`;
 
-  const open = state.tasks.filter((t) => !t.done);
-  const overdue = open.filter((t) => t.overdue).length;
-  const estimated = open.reduce((sum, t) => sum + (t.est_minutes || 0), 0);
+  const everything = [...state.tasks, ...state.fresh];
+  const overdue = everything.filter((t) => t.overdue).length;
+  const dueToday = everything.filter((t) => t.due_in_days === 0).length;
   const stats = el("stats");
   stats.replaceChildren();
   const add = (label, value, bad) => {
@@ -347,9 +334,8 @@ function render() {
     span.appendChild(b);
     stats.appendChild(span);
   };
-  add("open", open.length, false);
   add("overdue", overdue, overdue > 0);
-  add("estimated", fmtMinutes(estimated), false);
+  add("due today", dueToday, false);
 }
 
 /* --------------------------------------------------------------------- data */

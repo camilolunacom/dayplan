@@ -46,17 +46,6 @@ def _resolve_many(conn: sqlite3.Connection, refs: list[str]) -> list[str]:
     return resolved
 
 
-def _fmt_minutes(total: int) -> str:
-    if not total:
-        return "0m"
-    hours, minutes = divmod(total, 60)
-    if hours and minutes:
-        return f"{hours}h {minutes}m"
-    if hours:
-        return f"{hours}h"
-    return f"{minutes}m"
-
-
 def _due_cell(task: dict[str, Any]) -> str:
     if not task["due"]:
         return " " * 12
@@ -73,12 +62,11 @@ def _priority_cell(priority: int) -> str:
 
 
 def _task_line(task: dict[str, Any], prefix: str = "") -> str:
-    est = f" ({_fmt_minutes(task['est_minutes'])})" if task["est_minutes"] else ""
     project = f" · {task['project']}" if task["project"] else ""
     note = f"\n{' ' * (len(prefix) + 6)}↳ {task['plan_note']}" if task["plan_note"] else ""
     return (
         f"{prefix}#{task['ref']:<4} {_due_cell(task)} {_priority_cell(task['priority'])} "
-        f"{task['source']:<{SOURCE_WIDTH}} {task['title']}{project}{est}{note}"
+        f"{task['source']:<{SOURCE_WIDTH}} {task['title']}{project}{note}"
     )
 
 
@@ -95,12 +83,11 @@ def _print_tasks(tasks: list[dict[str, Any]], numbered: bool = False) -> None:
             typer.secho("     ── unordered below ──", fg=typer.colors.BRIGHT_BLACK)
             shown_divider = True
         if numbered:
-            mark = "x" if task["done"] else " "
             # The task to work on now gets an arrow instead of its number.
             is_next = bool(upcoming and task["id"] == upcoming["id"])
             # Same width either way so the column stays aligned.
             slot = " ▶ " if is_next else f"{index:>2}."
-            line = _task_line(task, prefix=f"{slot} [{mark}] ")
+            line = _task_line(task, prefix=f"{slot} ")
             if is_next:
                 typer.secho(line, fg=typer.colors.CYAN, bold=True)
             else:
@@ -284,7 +271,7 @@ def keep(refs: list[str] = typer.Argument(...)) -> None:
 
 @app.command()
 def dismiss(refs: list[str] = typer.Argument(...)) -> None:
-    """Send tasks back to the new pile. Discards their note and estimate."""
+    """Send tasks back to the new pile. Discards their note."""
     conn = _conn()
     try:
         for task_id in _resolve_many(conn, refs):
@@ -296,7 +283,7 @@ def dismiss(refs: list[str] = typer.Argument(...)) -> None:
 
 @app.command()
 def current(json: bool = typer.Option(False, "--json")) -> None:
-    """The featured task: first in the list that is not done."""
+    """The featured task: the first one in the list."""
     conn = _conn()
     try:
         task = store.current_task(conn)
@@ -375,42 +362,6 @@ def note(ref: str, text: str = typer.Argument(..., help="Use '' to clear.")) -> 
 
 
 @app.command()
-def est(ref: str, minutes: int = typer.Argument(..., help="0 clears the estimate.")) -> None:
-    """Set a time estimate, in minutes."""
-    conn = _conn()
-    try:
-        task_id = _resolve_many(conn, [ref])[0]
-        store.update_plan(conn, task_id, est_minutes=minutes, day=store.LIST)
-        typer.echo(f"{task_id} estimate {_fmt_minutes(minutes)}")
-    finally:
-        conn.close()
-
-
-@app.command()
-def done(
-    refs: list[str] = typer.Argument(...),
-    undo: bool = typer.Option(False, "--undo", help="Mark as not done instead."),
-) -> None:
-    """Tick a task off locally. v1 does not push this back to the source."""
-    conn = _conn()
-    try:
-        for task_id in _resolve_many(conn, refs):
-            store.update_plan(conn, task_id, done=not undo, day=store.LIST)
-            typer.echo(f"{task_id} {'reopened' if undo else 'done (local only)'}")
-    finally:
-        conn.close()
-
-
-STATE_LABEL = {
-    "ok": ("ok", typer.colors.GREEN),
-    "empty": ("EMPTY", typer.colors.YELLOW),
-    "error": ("ERROR", typer.colors.RED),
-    "never": ("never synced", typer.colors.YELLOW),
-    "off": ("not configured", typer.colors.BRIGHT_BLACK),
-}
-
-
-@app.command()
 def status(json: bool = typer.Option(False, "--json")) -> None:
     """Health of each integration: what it last did, and what went wrong."""
     cfg = load_config()
@@ -485,17 +436,10 @@ def summary(
         return
     now = data["current"]
     typer.echo(f"now        {now['title'] if now else '(nothing)'}")
-    typer.echo(
-        f"list       {data['open_count']} open / {data['count']} total, "
-        f"{data['pinned_count']} ordered by hand"
-    )
+    typer.echo(f"list       {data['count']} tasks, {data['pinned_count']} ordered by hand")
     by_source = "  ".join(f"{k} {v}" for k, v in sorted(data["by_source"].items()))
     typer.echo(f"new        {data['new_count']}")
     typer.echo(f"sources    {by_source or 'none'}")
-    typer.echo(
-        f"estimated  {_fmt_minutes(data['estimated_minutes'])} "
-        f"({data['unestimated_count']} without an estimate)"
-    )
     typer.echo(f"overdue    {data['overdue_count']}")
     typer.echo(f"due today  {data['due_today_count']}")
 

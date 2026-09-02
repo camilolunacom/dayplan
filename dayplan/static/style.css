@@ -90,7 +90,7 @@ header {
 .stats .bad { color: var(--red); }
 .stats .bad b { color: var(--red); }
 
-button, input[type="search"], input[type="number"], textarea {
+button, input[type="search"], textarea {
   background: var(--bg);
   color: var(--tx);
   border: 1px solid var(--ui-2);
@@ -302,8 +302,6 @@ main {
 }
 .card:hover { background: var(--ui); }
 .card.dragging { opacity: 0.4; cursor: grabbing; }
-.card.is-done { opacity: 0.5; }
-.card.is-done .title { text-decoration: line-through; }
 .card.loose { background: transparent; }
 .card.loose:hover { background: var(--bg-2); }
 
@@ -346,17 +344,6 @@ main {
 .badge.prio { color: var(--yellow); border-color: var(--yellow); }
 .badge.ref { color: var(--tx-3); font-variant-numeric: tabular-nums; }
 
-.est {
-  width: 54px;
-  padding: 2px 5px;
-  font-size: 11.5px;
-  text-align: right;
-  -moz-appearance: textfield;
-}
-.est::-webkit-outer-spin-button, .est::-webkit-inner-spin-button {
-  -webkit-appearance: none; margin: 0;
-}
-
 .notefield {
   width: 100%;
   background: var(--bg);
@@ -390,8 +377,6 @@ main {
 }
 .iconbtn:hover { background: transparent; color: var(--red); }
 .iconbtn.accept:hover { color: var(--green); }
-
-input[type="checkbox"] { accent-color: var(--green); cursor: pointer; }
 
 /* ------------------------------------------------------------------- toggl */
 

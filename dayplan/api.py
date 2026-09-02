@@ -199,14 +199,8 @@ def create_app() -> FastAPI:
             resolved = store.resolve(conn, task_id)
         except store.ResolveError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        est = payload.get("est_minutes")
         result = store.update_plan(
-            conn,
-            resolved,
-            note=payload.get("note"),
-            est_minutes=int(est) if est is not None else None,
-            done=payload.get("done"),
-            day=store.LIST,
+            conn, resolved, note=payload.get("note"), day=store.LIST
         )
         return result or {}
 

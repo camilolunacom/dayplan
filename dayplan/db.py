@@ -30,17 +30,15 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(source);
 CREATE INDEX IF NOT EXISTS idx_tasks_closed ON tasks(closed);
 
--- Annotation and ordering are independent: a row may carry a note, an
--- estimate or a tick with position NULL, meaning "not placed by hand". That
--- is why position is nullable -- otherwise adding a note would have to give
--- the task a position, which silently reorders the list.
+-- Annotation and ordering are independent: a row may carry a note with
+-- position NULL, meaning "not placed by hand". That is why position is
+-- nullable -- otherwise adding a note would have to give the task a
+-- position, which silently reorders the list.
 CREATE TABLE IF NOT EXISTS plan (
     task_id      TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
     day          TEXT NOT NULL,
     position     INTEGER,             -- NULL = default order
     note         TEXT,
-    est_minutes  INTEGER,
-    done_local   INTEGER NOT NULL DEFAULT 0,
     updated_at   TEXT NOT NULL
 );
 
@@ -91,12 +89,9 @@ def _migrate_plan_position_nullable(conn: sqlite3.Connection) -> None:
             day          TEXT NOT NULL,
             position     INTEGER,
             note         TEXT,
-            est_minutes  INTEGER,
-            done_local   INTEGER NOT NULL DEFAULT 0,
             updated_at   TEXT NOT NULL
         );
-        INSERT INTO plan_new SELECT task_id, day, position, note, est_minutes,
-               done_local, updated_at FROM plan;
+        INSERT INTO plan_new SELECT task_id, day, position, note, updated_at FROM plan;
         DROP TABLE plan;
         ALTER TABLE plan_new RENAME TO plan;
         COMMIT;
@@ -132,6 +127,21 @@ def _migrate_days_into_one_list(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _drop_estimate_and_done(conn: sqlite3.Connection) -> None:
+    """Remove the estimate and the local done tick.
+
+    Neither earned its keep: an estimate nobody fills in is noise, and ticking
+    a task off here never reached the source, so the next sync just brought it
+    back. A task leaves the list by being closed where it lives.
+    """
+    have = {row["name"] for row in conn.execute("PRAGMA table_info(plan)")}
+    for column in ("est_minutes", "done_local"):
+        if column in have:
+            conn.execute(f"ALTER TABLE plan DROP COLUMN {column}")
+    if have & {"est_minutes", "done_local"}:
+        conn.commit()
+
+
 def _add_missing_columns(conn: sqlite3.Connection) -> None:
     """ALTER TABLE ADD COLUMN is safe and cheap in SQLite; CREATE TABLE IF NOT
     EXISTS will not add a column to a table that already exists."""
@@ -159,6 +169,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     _add_missing_columns(conn)
     _migrate_plan_position_nullable(conn)
     _migrate_days_into_one_list(conn)
+    _drop_estimate_and_done(conn)
     return conn
 
 

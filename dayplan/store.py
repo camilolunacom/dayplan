@@ -192,8 +192,7 @@ def sync(
 TASK_SELECT = """
 SELECT t.id, t.ref, t.source, t.external_id, t.title, t.url, t.project, t.status,
        t.priority, t.due, t.tags, t.notes, t.toggl_project_id, t.closed, t.closed_at, t.first_seen,
-       p.day AS plan_day, p.position AS plan_position, p.note AS plan_note,
-       p.est_minutes, p.done_local
+       p.day AS plan_day, p.position AS plan_position, p.note AS plan_note
 FROM tasks t
 LEFT JOIN plan p ON p.task_id = t.id
 """
@@ -223,8 +222,6 @@ def _row_to_task(row: sqlite3.Row) -> dict[str, Any]:
         "day": row["plan_day"],
         "position": row["plan_position"],
         "plan_note": row["plan_note"],
-        "est_minutes": row["est_minutes"],
-        "done": bool(row["done_local"]),
         # Three zones, all derived from the plan row:
         #   ordered    a manual position -> he arranged it
         #   unordered  a row but no position -> he has seen it, not ranked it
@@ -248,13 +245,13 @@ def _sort_key(task: dict[str, Any]) -> tuple:
     return (has_due, due_in if due_in is not None else 0, -task["priority"], task["title"].lower())
 
 
-def ordered_tasks(conn: sqlite3.Connection, include_done: bool = True) -> list[dict[str, Any]]:
+def ordered_tasks(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """The main list: hand-ordered items first, then the ones he has seen.
 
     Tasks that arrived from a sync and have never been touched are *not* here
     — they live in `new_tasks` so a sync cannot disturb an arrangement.
     """
-    tasks = [t for t in list_tasks(conn, include_done=include_done) if t["zone"] != "new"]
+    tasks = [t for t in list_tasks(conn) if t["zone"] != "new"]
     placed = [t for t in tasks if t["position"] is not None]
     seen = [t for t in tasks if t["position"] is None]
     placed.sort(key=lambda t: t["position"])
@@ -293,8 +290,8 @@ def acknowledge(conn: sqlite3.Connection, task_id: str) -> None:
 def unacknowledge(conn: sqlite3.Connection, task_id: str) -> None:
     """Send a task back to the new pile.
 
-    This drops the plan row, so the note, estimate and local tick go with it —
-    that is the point: the task returns to being untriaged.
+    This drops the plan row, so the note goes with it — that is the point:
+    the task returns to being untriaged.
     """
     row = conn.execute("SELECT day FROM plan WHERE task_id = ?", (task_id,)).fetchone()
     if not row:
@@ -311,7 +308,6 @@ def list_tasks(
     day: str | None = None,
     unplanned: bool = False,
     include_closed: bool = False,
-    include_done: bool = True,
     query: str | None = None,
 ) -> list[dict[str, Any]]:
     clauses: list[str] = []
@@ -337,8 +333,6 @@ def list_tasks(
         sql += " WHERE " + " AND ".join(clauses)
 
     tasks = [_row_to_task(row) for row in conn.execute(sql, params).fetchall()]
-    if not include_done:
-        tasks = [t for t in tasks if not t["done"]]
 
     if day:
         tasks.sort(key=lambda t: (t["position"] if t["position"] is not None else 1 << 30))
@@ -447,8 +441,8 @@ def assign(
 def unassign(conn: sqlite3.Connection, task_id: str) -> None:
     """Clear the manual position so the task falls back to the default order.
 
-    The note, estimate and local tick are kept: unpinning is a statement
-    about ordering, not a reason to throw away what he wrote.
+    The note is kept: unpinning is a statement about ordering, not a reason
+    to throw away what he wrote.
     """
     row = conn.execute("SELECT day FROM plan WHERE task_id = ?", (task_id,)).fetchone()
     if not row:
@@ -509,8 +503,6 @@ def update_plan(
     task_id: str,
     *,
     note: str | None = None,
-    est_minutes: int | None = None,
-    done: bool | None = None,
     day: str | None = None,
 ) -> dict[str, Any] | None:
     """Update the local-only fields.
@@ -531,12 +523,6 @@ def update_plan(
     if note is not None:
         sets.append("note = ?")
         params.append(note or None)
-    if est_minutes is not None:
-        sets.append("est_minutes = ?")
-        params.append(est_minutes if est_minutes > 0 else None)
-    if done is not None:
-        sets.append("done_local = ?")
-        params.append(1 if done else 0)
     if sets:
         sets.append("updated_at = ?")
         params.append(_now())
@@ -549,8 +535,12 @@ def update_plan(
 
 
 def next_task(plan: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """The one to work on now: first in plan order that is not done yet."""
-    return next((task for task in plan if not task["done"]), None)
+    """The one to work on now: simply the first, since the order is the point.
+
+    There is no local "done" any more -- a task leaves by being closed at the
+    source, which the next sync notices.
+    """
+    return plan[0] if plan else None
 
 
 # ------------------------------------------------------------------- integrations
@@ -650,17 +640,13 @@ def summary(conn: sqlite3.Connection, day: str | None = None) -> dict[str, Any]:
     day = day or today_str()
     tasks = ordered_tasks(conn)
     fresh = new_tasks(conn)
-    open_tasks = [t for t in tasks if not t["done"]]
 
     by_source: dict[str, int] = {}
-    for task in open_tasks + fresh:
+    for task in tasks + fresh:
         by_source[task["source"]] = by_source.get(task["source"], 0) + 1
 
-    overdue = [t for t in open_tasks if t["overdue"]]
-    due_today = [t for t in open_tasks if t["due_in_days"] == 0]
-    estimated = sum(t["est_minutes"] or 0 for t in open_tasks)
-    plan = tasks
-    pending = open_tasks
+    overdue = [t for t in tasks + fresh if t["overdue"]]
+    due_today = [t for t in tasks + fresh if t["due_in_days"] == 0]
 
     last_sync = {}
     for row in conn.execute("SELECT key, value FROM meta WHERE key LIKE 'last_sync:%'").fetchall():
@@ -671,13 +657,9 @@ def summary(conn: sqlite3.Connection, day: str | None = None) -> dict[str, Any]:
         "current": next_task(tasks),
         "tasks": tasks,
         "count": len(tasks),
-        "open_count": len(open_tasks),
-        "done_count": len(tasks) - len(open_tasks),
         "pinned_count": len([t for t in tasks if t["pinned"]]),
         "new_count": len(fresh),
         "new": fresh[:20],
-        "estimated_minutes": estimated,
-        "unestimated_count": len([t for t in open_tasks if not t["est_minutes"]]),
         "by_source": by_source,
         "overdue_count": len(overdue),
         "overdue": overdue[:20],
