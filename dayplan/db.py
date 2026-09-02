@@ -30,15 +30,14 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(source);
 CREATE INDEX IF NOT EXISTS idx_tasks_closed ON tasks(closed);
 
--- Annotation and ordering are independent: a row may carry a note with
--- position NULL, meaning "not placed by hand". That is why position is
--- nullable -- otherwise adding a note would have to give the task a
--- position, which silently reorders the list.
+-- What is his rather than the providers': the order. A row with position NULL
+-- means "seen, not ranked", which is what separates the list from the new
+-- pile. `day` is a leftover from the per-day model and now always holds
+-- 'list'.
 CREATE TABLE IF NOT EXISTS plan (
     task_id      TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
     day          TEXT NOT NULL,
     position     INTEGER,             -- NULL = default order
-    note         TEXT,
     updated_at   TEXT NOT NULL
 );
 
@@ -88,10 +87,9 @@ def _migrate_plan_position_nullable(conn: sqlite3.Connection) -> None:
             task_id      TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
             day          TEXT NOT NULL,
             position     INTEGER,
-            note         TEXT,
             updated_at   TEXT NOT NULL
         );
-        INSERT INTO plan_new SELECT task_id, day, position, note, updated_at FROM plan;
+        INSERT INTO plan_new SELECT task_id, day, position, updated_at FROM plan;
         DROP TABLE plan;
         ALTER TABLE plan_new RENAME TO plan;
         COMMIT;
@@ -127,18 +125,18 @@ def _migrate_days_into_one_list(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _drop_estimate_and_done(conn: sqlite3.Connection) -> None:
-    """Remove the estimate and the local done tick.
+# Fields that were invented rather than asked for, and removed once that was
+# clear: an estimate nobody fills in is noise, a local done tick never reached
+# the source so the next sync undid it, and a note is not what this app is for.
+DROPPED_PLAN_COLUMNS = ("est_minutes", "done_local", "note")
 
-    Neither earned its keep: an estimate nobody fills in is noise, and ticking
-    a task off here never reached the source, so the next sync just brought it
-    back. A task leaves the list by being closed where it lives.
-    """
+
+def _drop_unused_plan_columns(conn: sqlite3.Connection) -> None:
     have = {row["name"] for row in conn.execute("PRAGMA table_info(plan)")}
-    for column in ("est_minutes", "done_local"):
-        if column in have:
-            conn.execute(f"ALTER TABLE plan DROP COLUMN {column}")
-    if have & {"est_minutes", "done_local"}:
+    stale = have & set(DROPPED_PLAN_COLUMNS)
+    for column in stale:
+        conn.execute(f"ALTER TABLE plan DROP COLUMN {column}")
+    if stale:
         conn.commit()
 
 
@@ -169,7 +167,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     _add_missing_columns(conn)
     _migrate_plan_position_nullable(conn)
     _migrate_days_into_one_list(conn)
-    _drop_estimate_and_done(conn)
+    _drop_unused_plan_columns(conn)
     return conn
 
 

@@ -90,7 +90,7 @@ header {
 .stats .bad { color: var(--red); }
 .stats .bad b { color: var(--red); }
 
-button, input[type="search"], textarea {
+button, input[type="search"] {
   background: var(--bg);
   color: var(--tx);
   border: 1px solid var(--ui-2);
@@ -201,8 +201,7 @@ main {
   grid-template-areas:
     "eyebrow eyebrow eyebrow"
     "idx     title   side"
-    ".       meta    meta"
-    ".       note    note";
+    ".       meta    meta";
   gap: 4px 14px;
 }
 .card.featured:hover { background: var(--bg-2); }
@@ -295,7 +294,7 @@ main {
   cursor: grab;
   display: grid;
   grid-template-columns: auto 1fr auto;
-  grid-template-areas: "idx title side" ". meta meta" ". note note";
+  grid-template-areas: "idx title side" ". meta meta";
   /* .card.featured adds an "eyebrow" row on top of these. */
   gap: 2px 10px;
   align-items: start;
@@ -329,8 +328,6 @@ main {
   color: var(--tx-2);
   font-size: 11.5px;
 }
-.card .note { grid-area: note; margin-top: 4px; }
-
 .badge {
   border-radius: 4px;
   padding: 1px 5px;
@@ -343,29 +340,6 @@ main {
 .badge.due-today { color: var(--orange); border-color: var(--orange); }
 .badge.prio { color: var(--yellow); border-color: var(--yellow); }
 .badge.ref { color: var(--tx-3); font-variant-numeric: tabular-nums; }
-
-.notefield {
-  width: 100%;
-  background: var(--bg);
-  border: 1px solid var(--ui-2);
-  border-radius: 4px;
-  color: var(--tx);
-  font: inherit;
-  font-size: 12px;
-  padding: 4px 7px;
-  resize: vertical;
-  min-height: 26px;
-}
-
-.addnote {
-  background: transparent;
-  border: none;
-  color: var(--tx-3);
-  padding: 0 2px;
-  font-size: 11px;
-  margin-left: 2px;
-}
-.addnote:hover { background: transparent; color: var(--accent); }
 
 .iconbtn {
   background: transparent;

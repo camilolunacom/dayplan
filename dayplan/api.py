@@ -189,21 +189,6 @@ def create_app() -> FastAPI:
         store.unassign(conn, resolved)
         return {"task_id": resolved, "pinned": False}
 
-    @app.patch("/api/tasks/{task_id}/plan")
-    def patch_plan(
-        task_id: str,
-        payload: dict[str, Any] = Body(...),
-        conn: sqlite3.Connection = Depends(get_conn),
-    ) -> dict[str, Any]:
-        try:
-            resolved = store.resolve(conn, task_id)
-        except store.ResolveError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        result = store.update_plan(
-            conn, resolved, note=payload.get("note"), day=store.LIST
-        )
-        return result or {}
-
     if STATIC_DIR.is_dir():
         @app.get("/")
         def index() -> FileResponse:

@@ -192,7 +192,7 @@ def sync(
 TASK_SELECT = """
 SELECT t.id, t.ref, t.source, t.external_id, t.title, t.url, t.project, t.status,
        t.priority, t.due, t.tags, t.notes, t.toggl_project_id, t.closed, t.closed_at, t.first_seen,
-       p.day AS plan_day, p.position AS plan_position, p.note AS plan_note
+       p.day AS plan_day, p.position AS plan_position
 FROM tasks t
 LEFT JOIN plan p ON p.task_id = t.id
 """
@@ -221,7 +221,6 @@ def _row_to_task(row: sqlite3.Row) -> dict[str, Any]:
         "first_seen": row["first_seen"],
         "day": row["plan_day"],
         "position": row["plan_position"],
-        "plan_note": row["plan_note"],
         # Three zones, all derived from the plan row:
         #   ordered    a manual position -> he arranged it
         #   unordered  a row but no position -> he has seen it, not ranked it
@@ -290,8 +289,8 @@ def acknowledge(conn: sqlite3.Connection, task_id: str) -> None:
 def unacknowledge(conn: sqlite3.Connection, task_id: str) -> None:
     """Send a task back to the new pile.
 
-    This drops the plan row, so the note goes with it — that is the point:
-    the task returns to being untriaged.
+    This drops the plan row, so it loses its place in the order — that is the
+    point: the task returns to being untriaged.
     """
     row = conn.execute("SELECT day FROM plan WHERE task_id = ?", (task_id,)).fetchone()
     if not row:
@@ -441,8 +440,8 @@ def assign(
 def unassign(conn: sqlite3.Connection, task_id: str) -> None:
     """Clear the manual position so the task falls back to the default order.
 
-    The note is kept: unpinning is a statement about ordering, not a reason
-    to throw away what he wrote.
+    The row itself stays, so the task remains part of the list rather than
+    falling back into the new pile.
     """
     row = conn.execute("SELECT day FROM plan WHERE task_id = ?", (task_id,)).fetchone()
     if not row:
@@ -493,54 +492,18 @@ def set_list_order(conn: sqlite3.Connection, ids: list[str]) -> list[str]:
     return set_order(conn, LIST, ids)
 
 
-def current_task(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    """The featured task: first in the list that is not ticked off."""
-    return next_task(ordered_tasks(conn))
-
-
-def update_plan(
-    conn: sqlite3.Connection,
-    task_id: str,
-    *,
-    note: str | None = None,
-    day: str | None = None,
-) -> dict[str, Any] | None:
-    """Update the local-only fields.
-
-    Creates the plan row with no position if there is none, so annotating a
-    task never changes where it sits in the list.
-    """
-    if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
-        raise ResolveError(f"unknown task id {task_id!r}")
-    conn.execute(
-        "INSERT INTO plan(task_id, day, position, updated_at) VALUES(?, ?, NULL, ?) "
-        "ON CONFLICT(task_id) DO NOTHING",
-        (task_id, day or LIST, _now()),
-    )
-
-    sets: list[str] = []
-    params: list[Any] = []
-    if note is not None:
-        sets.append("note = ?")
-        params.append(note or None)
-    if sets:
-        sets.append("updated_at = ?")
-        params.append(_now())
-        conn.execute(f"UPDATE plan SET {', '.join(sets)} WHERE task_id = ?", (*params, task_id))
-    conn.commit()
-    return get_task(conn, task_id)
-
-
-# --------------------------------------------------------------------------- summary
-
-
 def next_task(plan: list[dict[str, Any]]) -> dict[str, Any] | None:
     """The one to work on now: simply the first, since the order is the point.
 
-    There is no local "done" any more -- a task leaves by being closed at the
-    source, which the next sync notices.
+    Nothing is completed from inside dayplan -- a task leaves by being closed
+    at its source, which the next sync notices.
     """
     return plan[0] if plan else None
+
+
+def current_task(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """The featured task: first in the list that is not ticked off."""
+    return next_task(ordered_tasks(conn))
 
 
 # ------------------------------------------------------------------- integrations

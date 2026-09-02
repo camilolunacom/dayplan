@@ -63,10 +63,9 @@ def _priority_cell(priority: int) -> str:
 
 def _task_line(task: dict[str, Any], prefix: str = "") -> str:
     project = f" · {task['project']}" if task["project"] else ""
-    note = f"\n{' ' * (len(prefix) + 6)}↳ {task['plan_note']}" if task["plan_note"] else ""
     return (
         f"{prefix}#{task['ref']:<4} {_due_cell(task)} {_priority_cell(task['priority'])} "
-        f"{task['source']:<{SOURCE_WIDTH}} {task['title']}{project}{note}"
+        f"{task['source']:<{SOURCE_WIDTH}} {task['title']}{project}"
     )
 
 
@@ -271,7 +270,7 @@ def keep(refs: list[str] = typer.Argument(...)) -> None:
 
 @app.command()
 def dismiss(refs: list[str] = typer.Argument(...)) -> None:
-    """Send tasks back to the new pile. Discards their note."""
+    """Send tasks back to the new pile, losing their place in the order."""
     conn = _conn()
     try:
         for task_id in _resolve_many(conn, refs):
@@ -345,18 +344,6 @@ def unpin(refs: list[str] = typer.Argument(...)) -> None:
         for task_id in _resolve_many(conn, refs):
             store.unassign(conn, task_id)
             typer.echo(f"{task_id} unpinned")
-    finally:
-        conn.close()
-
-
-@app.command()
-def note(ref: str, text: str = typer.Argument(..., help="Use '' to clear.")) -> None:
-    """Attach a local planning note to a task."""
-    conn = _conn()
-    try:
-        task_id = _resolve_many(conn, [ref])[0]
-        store.update_plan(conn, task_id, note=text, day=store.LIST)
-        typer.echo(f"{task_id} note set")
     finally:
         conn.close()
 

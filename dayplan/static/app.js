@@ -116,40 +116,6 @@ function togglSlot(task) {
 
 /* --------------------------------------------------------------------- cards */
 
-function noteBox(task, focus = false) {
-  const note = document.createElement("textarea");
-  note.className = "notefield";
-  note.rows = 1;
-  note.placeholder = "note…";
-  note.value = task.plan_note || "";
-  note.addEventListener("change", () => patchTask(task.id, { note: note.value }));
-  if (focus) requestAnimationFrame(() => note.focus());
-  return note;
-}
-
-/* An always-open textarea on every row costs a whole grid row each, which is
-   a lot of scrolling for a list this long. Only tasks that actually have a
-   note get the row; the rest get a small inline button in the meta line that
-   swaps itself for the field on click. */
-function noteField(task, alwaysOpen = false) {
-  const wrap = document.createElement("div");
-  wrap.className = "note";
-  wrap.appendChild(noteBox(task));
-  return wrap;
-}
-
-function addNoteButton(task, card) {
-  const add = document.createElement("button");
-  add.className = "addnote";
-  add.textContent = "+ note";
-  add.addEventListener("click", () => {
-    add.remove();
-    card.appendChild(noteField(task));
-    card.querySelector(".notefield").focus();
-  });
-  return add;
-}
-
 function titleNode(task, tag) {
   const node = document.createElement(tag);
   if (task.url) {
@@ -244,8 +210,6 @@ function buildCard(task, rank, isFeatured = false) {
   metaNodes(task, meta);
   card.appendChild(meta);
 
-  if (task.plan_note || isFeatured) card.appendChild(noteField(task));
-  else meta.appendChild(addNoteButton(task, card));
   return card;
 }
 
@@ -350,18 +314,6 @@ async function load() {
     render();
   } catch (error) {
     toast(`Could not load: ${error.message}`, true);
-  }
-}
-
-async function patchTask(taskId, payload) {
-  try {
-    await api(`/api/tasks/${encodeURIComponent(taskId)}/plan`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    });
-    await load();
-  } catch (error) {
-    toast(error.message, true);
   }
 }
 
