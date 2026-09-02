@@ -95,10 +95,12 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         cfg = load_config()
         target = _day(day)
+        plan = store.list_tasks(conn, day=target)
         return {
             "day": target,
             "today": today_str(),
-            "plan": store.list_tasks(conn, day=target),
+            "next": store.next_task(plan),
+            "plan": plan,
             "pending": store.list_tasks(conn, unplanned=True),
             "summary": store.summary(conn, target),
             "sources": cfg.enabled_sources(),

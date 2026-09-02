@@ -86,10 +86,19 @@ def _print_tasks(tasks: list[dict[str, Any]], numbered: bool = False) -> None:
     if not tasks:
         typer.echo("  (nothing)")
         return
+    upcoming = store.next_task(tasks) if numbered else None
     for index, task in enumerate(tasks, start=1):
         if numbered:
             mark = "x" if task["done"] else " "
-            typer.echo(_task_line(task, prefix=f"{index:>2}. [{mark}] "))
+            # The task to work on now gets an arrow instead of its number.
+            is_next = bool(upcoming and task["id"] == upcoming["id"])
+            # Same width either way so the column stays aligned.
+            slot = " ▶ " if is_next else f"{index:>2}."
+            line = _task_line(task, prefix=f"{slot} [{mark}] ")
+            if is_next:
+                typer.secho(line, fg=typer.colors.CYAN, bold=True)
+            else:
+                typer.echo(line)
         else:
             typer.echo(_task_line(task, prefix="    "))
 
@@ -228,6 +237,30 @@ def plan(
 def today(json: bool = typer.Option(False, "--json")) -> None:
     """Shortcut for `dayplan plan today`."""
     plan(today_str(), json)
+
+
+@app.command("next")
+def next_cmd(
+    day: str = typer.Option("today", "--day", "-d"),
+    json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Show the single task to work on now: first unfinished one in the plan."""
+    target = parse_day(day)
+    conn = _conn()
+    try:
+        upcoming = store.next_task(store.list_tasks(conn, day=target))
+    finally:
+        conn.close()
+    if json:
+        _echo_json(upcoming)
+        return
+    if not upcoming:
+        typer.echo(f"Nothing left to do on {target}.")
+        raise typer.Exit()
+    typer.secho(f"Next on {target}:", fg=typer.colors.CYAN, bold=True)
+    typer.echo(_task_line(upcoming, prefix="  ▶ "))
+    if upcoming["url"]:
+        typer.echo(f"    {upcoming['url']}")
 
 
 @app.command()

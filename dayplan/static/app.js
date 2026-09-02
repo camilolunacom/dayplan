@@ -86,12 +86,13 @@ function badge(cls, text) {
   return node;
 }
 
-function buildCard(task, index) {
+function buildCard(task, index, isNext = false) {
   const card = document.createElement("div");
   card.className = `card src-${task.source}`;
   card.dataset.id = task.id;
   card.draggable = true;
   if (task.done) card.classList.add("is-done");
+  if (isNext) card.classList.add("is-next");
 
   const inPlan = index !== null;
 
@@ -156,6 +157,7 @@ function buildCard(task, index) {
 
   const meta = document.createElement("div");
   meta.className = "meta";
+  if (isNext) meta.appendChild(badge("badge next", "next"));
   meta.appendChild(badge("badge ref", `#${task.ref}`));
   meta.appendChild(badge(`badge src-${task.source}`, task.source));
   const due = dueBadge(task);
@@ -181,6 +183,10 @@ function buildCard(task, index) {
   return card;
 }
 
+function nextTask(plan) {
+  return plan.find((task) => !task.done) || null;
+}
+
 function visiblePending() {
   const needle = state.filterText.trim().toLowerCase();
   return state.pending.filter((task) => {
@@ -200,8 +206,10 @@ function renderList(container, tasks, numbered) {
     container.appendChild(empty);
     return;
   }
+  const upcoming = numbered ? nextTask(tasks) : null;
   tasks.forEach((task, index) => {
-    container.appendChild(buildCard(task, numbered ? index : null));
+    const isNext = Boolean(upcoming && task.id === upcoming.id);
+    container.appendChild(buildCard(task, numbered ? index : null, isNext));
   });
 }
 
@@ -236,6 +244,20 @@ function render() {
   const open = state.plan.filter((t) => !t.done);
   const estimated = open.reduce((sum, t) => sum + (t.est_minutes || 0), 0);
   el("plan-meta").textContent = `${open.length} open · ${state.plan.length - open.length} done · ${fmtMinutes(estimated)} estimated`;
+
+  const upcoming = nextTask(state.plan);
+  const nextLine = el("next-line");
+  nextLine.replaceChildren();
+  if (upcoming) {
+    const label = document.createElement("b");
+    label.textContent = "Next:";
+    const title = document.createElement("span");
+    title.className = "t";
+    title.textContent = upcoming.title;
+    nextLine.append(label, title);
+  } else if (state.plan.length) {
+    nextLine.textContent = "All done for this day.";
+  }
 
   const overdue = state.pending.filter((t) => t.overdue).length;
   const dueToday = state.pending.filter((t) => t.due_in_days === 0).length;

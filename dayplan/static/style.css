@@ -135,6 +135,22 @@ main {
 
 .planmeta { color: var(--muted); font-size: 12.5px; }
 
+.nextline {
+  color: var(--muted);
+  font-size: 12.5px;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+.nextline b { color: var(--accent); font-weight: 600; }
+.nextline .t {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .list {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -180,6 +196,28 @@ main {
 .card.src-jira { border-left-color: var(--jira); }
 .card.is-done { opacity: 0.5; }
 .card.is-done .title { text-decoration: line-through; }
+
+/* The one to work on now: first task in the plan that is not done. */
+.card.is-next {
+  background: linear-gradient(180deg, rgba(106,166,255,0.16), rgba(106,166,255,0.06));
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 6px 18px -8px rgba(106,166,255,0.55);
+}
+.card.is-next .title {
+  font-size: 15.5px;
+  font-weight: 600;
+}
+.card.is-next .idx { color: var(--accent); font-weight: 700; }
+
+.badge.next {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #10131a;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
 
 .card .idx {
   grid-area: idx;

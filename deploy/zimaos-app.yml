@@ -1,0 +1,83 @@
+# dayplan as a ZimaOS (CasaOS) app.
+#
+# This is the file ZimaOS owns: install it through the app-management API so
+# the app appears in the ZimaOS dashboard and ZimaOS drives its lifecycle.
+# It is NOT the same as the repo's docker-compose.yml, which uses `build:` and
+# is for local development.
+#
+#   curl -s -X POST http://127.0.0.1:38111/v2/app_management/compose \
+#        -H 'Content-Type: application/yaml' --data-binary @zimaos-app.yml
+#
+# What makes it show up in the dashboard is the `x-casaos` block: without it
+# the app is listed by the API but has no store_info, so the UI cannot render
+# a tile and the status stays "unknown".
+name: dayplan
+services:
+    dayplan:
+        image: dayplan:0.1.0
+        # The image is built on the host and never published to a registry,
+        # so the installer must not try to pull it.
+        pull_policy: missing
+        container_name: dayplan
+        restart: unless-stopped
+        # network_mode bridge + a published port are both required by this
+        # host's TSDProxy, which reaches apps through host.docker.internal.
+        network_mode: bridge
+        ports:
+            - target: 8787
+              published: "8787"
+              protocol: tcp
+        # Secrets live in one 0600 file outside this compose, which the ZimaOS
+        # UI displays. Absolute path, matching the convention already used by
+        # nutritional-tracker on this host.
+        env_file:
+            - /DATA/AppData/dayplan/.env
+        environment:
+            DAYPLAN_SYNC_INTERVAL_MINUTES: "15"
+            TZ: America/Bogota
+        labels:
+            icon: http://192.168.50.224:8787/static/icon.svg
+            tsdproxy.enable: "true"
+            tsdproxy.name: dash
+            tsdproxy.port.1: "443/https:8787/http"
+            tsdproxy.funnel: "false"
+        volumes:
+            - type: bind
+              source: /DATA/AppData/dayplan/data
+              target: /data
+        x-casaos:
+            image: ""
+            ports:
+                - container: "8787"
+                  description:
+                    en_us: dayplan web UI and HTTP API
+            volumes:
+                - container: /data
+                  description:
+                    en_US: SQLite cache and your day plan
+networks:
+    default:
+        name: dayplan_default
+x-casaos:
+    architectures:
+        - amd64
+    author: Camilo Luna
+    category: unknown
+    description:
+        en_US: TickTick, Asana and Jira in one list, ordered by hand for the day.
+    developer: unknown
+    hostname: ""
+    icon: http://192.168.50.224:8787/static/icon.svg
+    image: null
+    index: /
+    is_uncontrolled: false
+    main: dayplan
+    port_map: "8787"
+    scheme: http
+    store_app_id: dayplan
+    thumbnail: ""
+    tips:
+        custom: Also at https://dash.your-tailnet.ts.net over Tailscale.
+    title:
+        custom: dayplan
+        en_US: dayplan

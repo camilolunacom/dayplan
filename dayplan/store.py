@@ -398,6 +398,11 @@ def update_plan(
 # --------------------------------------------------------------------------- summary
 
 
+def next_task(plan: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The one to work on now: first in plan order that is not done yet."""
+    return next((task for task in plan if not task["done"]), None)
+
+
 def summary(conn: sqlite3.Connection, day: str | None = None) -> dict[str, Any]:
     day = day or today_str()
     plan = list_tasks(conn, day=day)
@@ -417,6 +422,7 @@ def summary(conn: sqlite3.Connection, day: str | None = None) -> dict[str, Any]:
 
     return {
         "day": day,
+        "next": next_task(plan),
         "plan": plan,
         "plan_count": len(plan),
         "plan_open": len([t for t in plan if not t["done"]]),

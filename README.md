@@ -108,6 +108,31 @@ ssh zima 'docker exec dayplan dayplan today'
 ssh zima 'docker exec dayplan dayplan sync'
 ```
 
+### Registering it as a ZimaOS app
+
+Running it with bare `docker compose` works but leaves it invisible in the
+ZimaOS dashboard: the app-management API lists the project, yet without
+`store_info` the UI cannot draw a tile and the status stays `unknown`.
+`store_info` comes from the **`x-casaos` block in the compose file**.
+
+`deploy/zimaos-app.yml` is the ZimaOS-owned variant (prebuilt `image:` instead
+of `build:`, a bind mount under `/DATA/AppData/dayplan/data`, secrets via an
+absolute-path `env_file`, and both `x-casaos` blocks). Install it through the
+API:
+
+```bash
+ssh zima
+PORT=$(cat /var/run/casaos/app-management.url)
+curl -s -X POST "$PORT/v2/app_management/compose" \
+     -H 'Content-Type: application/yaml' \
+     --data-binary @/DATA/AppData/dayplan/zimaos-app.yml
+```
+
+`/DATA/AppData/dayplan` still holds the source and the repo's
+`docker-compose.yml`, used only to rebuild the image
+(`DOCKER_CONFIG=/DATA/.docker docker compose build`). The app itself is owned
+by ZimaOS at `/var/lib/casaos/apps/dayplan/`.
+
 ### Tailscale exposure (TSDProxy)
 
 The compose labels hand the container to the TSDProxy instance already running
@@ -153,6 +178,11 @@ Two columns. **Pending** on the left is everything not yet placed on a day,
 sorted overdue first, then by due date, then priority. **Plan** on the right is
 one day, in your order.
 
+The first task in the plan that is not yet done is highlighted as **next** —
+the one to work on right now. It carries a `NEXT` badge and is named in the
+panel header. Nothing sets it by hand: it is derived from your ordering, so it
+advances on its own as you tick tasks off or drag something above it.
+
 - Drag a card from Pending into Plan to schedule it, at the position you drop it.
 - Drag within Plan to reorder.
 - Drag back out to Pending to unschedule it.
@@ -186,7 +216,9 @@ dayplan est '#12' 45
 dayplan done '#12'                      # local only
 dayplan done '#12' --undo
 
-dayplan today                           # the ordered plan
+dayplan next                            # just the one to work on now
+dayplan next --json                     # same, for an agent
+dayplan today                           # the ordered plan, ▶ marks next
 dayplan plan tomorrow
 dayplan summary                         # JSON snapshot, for an agent
 dayplan summary --text
@@ -202,9 +234,9 @@ partial reorder never silently drops work.
 
 | Method | Path | Does |
 | --- | --- | --- |
-| `GET` | `/api/state?day=YYYY-MM-DD` | everything the UI needs in one call |
+| `GET` | `/api/state?day=YYYY-MM-DD` | everything the UI needs in one call, including `next` |
 | `GET` | `/api/tasks?source=&day=&unplanned=&q=` | filtered task list |
-| `GET` | `/api/summary?day=` | workload snapshot |
+| `GET` | `/api/summary?day=` | workload snapshot, including `next` |
 | `POST` | `/api/sync` | pull now, body `{"sources": ["jira"]}` optional |
 | `PUT` | `/api/plan/{day}/order` | body `{"ids": [...]}`, sets the order |
 | `POST` | `/api/plan/{day}/tasks` | body `{"task_id": "...", "position": 0}` |
