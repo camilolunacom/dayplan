@@ -115,23 +115,54 @@ ZimaOS dashboard: the app-management API lists the project, yet without
 `store_info` the UI cannot draw a tile and the status stays `unknown`.
 `store_info` comes from the **`x-casaos` block in the compose file**.
 
-`deploy/zimaos-app.yml` is the ZimaOS-owned variant (prebuilt `image:` instead
-of `build:`, a bind mount under `/DATA/AppData/dayplan/data`, secrets via an
-absolute-path `env_file`, and both `x-casaos` blocks). Install it through the
-API:
+`deploy/zimaos-app.yml` is the ZimaOS-owned definition. It differs from the
+repo's `docker-compose.yml` in four ways that all matter:
+
+- **`image: localhost:5000/dayplan:0.1.0`.** The ZimaOS installer always
+  pulls and ignores `pull_policy`, walking a chain of public mirrors and
+  aborting when none has the image — so a bare local tag cannot be installed
+  at all. `deploy/zimaos-registry.yml` runs a loopback registry (itself a
+  ZimaOS app) to serve it.
+- **`env_file: /DATA/config/dayplan/.env`**, outside `/DATA/AppData`.
+- **A bind mount** at `/DATA/AppData/dayplan/data` instead of a named volume.
+- **Both `x-casaos` blocks**, which is what produces the tile.
+
+Layout on the host, chosen so an uninstall cannot destroy anything
+irreplaceable:
+
+| Path | Holds | Survives uninstall |
+| --- | --- | --- |
+| `/DATA/src/dayplan/` | build source | yes |
+| `/DATA/config/dayplan/.env` | tokens, mode 600 | yes |
+| `/DATA/AppData/dayplan/data/` | `dayplan.sqlite` — tasks **and your plan** | **no** |
+| `/var/lib/casaos/apps/dayplan/` | the compose ZimaOS owns | no |
+
+Deploying a new build:
 
 ```bash
 ssh zima
+export DOCKER_CONFIG=/DATA/.docker
+cd /DATA/src/dayplan && docker compose build          # ~10 min on this box
+docker tag dayplan:0.1.0 localhost:5000/dayplan:0.1.0
+docker push localhost:5000/dayplan:0.1.0
 PORT=$(cat /var/run/casaos/app-management.url)
 curl -s -X POST "$PORT/v2/app_management/compose" \
      -H 'Content-Type: application/yaml' \
-     --data-binary @/DATA/AppData/dayplan/zimaos-app.yml
+     --data-binary @/DATA/src/dayplan/deploy/zimaos-app.yml
 ```
 
-`/DATA/AppData/dayplan` still holds the source and the repo's
-`docker-compose.yml`, used only to rebuild the image
-(`DOCKER_CONFIG=/DATA/.docker docker compose build`). The app itself is owned
-by ZimaOS at `/var/lib/casaos/apps/dayplan/`.
+The POST returns 200 and installs asynchronously, so 200 does not mean it
+worked. Confirm with `status: running` **and** `store_info` present:
+
+```bash
+curl -s "$PORT/v2/app_management/compose" \
+  | python3 -c 'import json,sys; a=json.load(sys.stdin)["data"]["dayplan"]; \
+      print(a["status"], "store_info" in a)'
+```
+
+> **Uninstalling dayplan from the ZimaOS UI deletes
+> `/DATA/AppData/dayplan/`, including the SQLite file with your hand-made
+> plan, and removes the image.** Copy `data/dayplan.sqlite` out first.
 
 ### Tailscale exposure (TSDProxy)
 

@@ -14,10 +14,15 @@
 name: dayplan
 services:
     dayplan:
-        image: dayplan:0.1.0
-        # The image is built on the host and never published to a registry,
-        # so the installer must not try to pull it.
-        pull_policy: missing
+        # Must come from a registry the daemon can pull from. The ZimaOS
+        # installer ALWAYS pulls and ignores `pull_policy`, walking a chain of
+        # public mirrors and aborting the install when none of them has the
+        # image -- so a plain local `dayplan:0.1.0` tag cannot be installed.
+        # deploy/zimaos-registry.yml runs the registry that serves this.
+        #
+        #   docker tag dayplan:0.1.0 localhost:5000/dayplan:0.1.0
+        #   docker push localhost:5000/dayplan:0.1.0
+        image: localhost:5000/dayplan:0.1.0
         container_name: dayplan
         restart: unless-stopped
         # network_mode bridge + a published port are both required by this
@@ -28,10 +33,10 @@ services:
               published: "8787"
               protocol: tcp
         # Secrets live in one 0600 file outside this compose, which the ZimaOS
-        # UI displays. Absolute path, matching the convention already used by
-        # nutritional-tracker on this host.
+        # UI displays. Deliberately NOT under /DATA/AppData: uninstalling an
+        # app in ZimaOS deletes /DATA/AppData/<app> and everything in it.
         env_file:
-            - /DATA/AppData/dayplan/.env
+            - /DATA/config/dayplan/.env
         environment:
             DAYPLAN_SYNC_INTERVAL_MINUTES: "15"
             TZ: America/Bogota
@@ -77,7 +82,7 @@ x-casaos:
     store_app_id: dayplan
     thumbnail: ""
     tips:
-        custom: Also at https://dash.your-tailnet.ts.net over Tailscale.
+        custom: Also at https://dash.your-tailnet.ts.net over Tailscale. Uninstalling deletes /DATA/AppData/dayplan, including your saved plan.
     title:
         custom: dayplan
         en_US: dayplan

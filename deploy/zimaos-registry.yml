@@ -1,0 +1,66 @@
+# A private Docker registry on the zima, so locally-built images can be
+# installed through ZimaOS.
+#
+# Why this exists: the ZimaOS app installer ALWAYS pulls the image, ignoring
+# `pull_policy: missing`. It walks a chain of public mirrors and aborts the
+# install when none of them has your image. A locally-built image therefore
+# cannot be installed through the API at all. Pushing it to a registry on
+# 127.0.0.1 fixes that with no internet and no credentials: Docker treats
+# localhost as an insecure registry by default.
+name: registry
+services:
+    registry:
+        image: registry:2
+        container_name: registry
+        restart: unless-stopped
+        network_mode: bridge
+        ports:
+            # Bound to loopback only: this is a build artifact store for the
+            # host's own docker daemon, and it has no authentication.
+            # host_ip is its own key: putting the IP inside `published` fails
+            # with `invalid port specification`.
+            - target: 5000
+              host_ip: 127.0.0.1
+              published: "5000"
+              protocol: tcp
+        environment:
+            REGISTRY_STORAGE_DELETE_ENABLED: "true"
+            TZ: America/Bogota
+        volumes:
+            - type: bind
+              source: /DATA/AppData/registry/data
+              target: /var/lib/registry
+        x-casaos:
+            image: ""
+            ports:
+                - container: "5000"
+                  description:
+                    en_us: registry API (loopback only)
+            volumes:
+                - container: /var/lib/registry
+                  description:
+                    en_US: stored image layers
+networks:
+    default:
+        name: registry_default
+x-casaos:
+    architectures:
+        - amd64
+    author: Camilo Luna
+    category: Developer
+    description:
+        en_US: Private image registry so locally-built apps can be installed through ZimaOS.
+    developer: unknown
+    hostname: ""
+    icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/docker.svg
+    image: null
+    index: /v2/_catalog
+    is_uncontrolled: false
+    main: registry
+    port_map: "5000"
+    scheme: http
+    store_app_id: registry
+    thumbnail: ""
+    title:
+        custom: Image Registry
+        en_US: registry
