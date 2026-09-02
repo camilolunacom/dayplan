@@ -9,9 +9,11 @@ from pathlib import Path
 CONFIG_DIR = Path(os.environ.get("DAYPLAN_CONFIG_DIR", Path.home() / ".config" / "dayplan"))
 DATA_DIR = Path(os.environ.get("DAYPLAN_DATA_DIR", Path.home() / ".local" / "share" / "dayplan"))
 
+# Deliberately generic: statusCategory works on every Jira workflow, whereas
+# named statuses are per-project. Override with JIRA_JQL to exclude the
+# parked states your own workflow uses.
 DEFAULT_JIRA_JQL = (
-    'assignee = currentUser() AND status NOT IN ("Under Client Review", Closed, '
-    '"Issue Closed", Done, "ON HOLD", "Waiting for Client", WAITING) '
+    "assignee = currentUser() AND statusCategory != Done "
     "ORDER BY priority DESC, due ASC, created ASC, project ASC"
 )
 

@@ -49,11 +49,15 @@ local run) and fill it in.
 ### Do not narrow ASANA_WORKSPACES by accident
 
 Leaving `ASANA_WORKSPACES` unset scans every workspace the token can see,
-which is almost always what you want. Camilo's tasks live in
-`client-a.example` and `client-b.example`, **not** in `your-org.example` — pinning
-it to the mindk gid yields zero tasks and no error. Note that the Asana MCP
-connector only ever sees `your-org.example`, so it is a misleading source for this
-value; a personal access token sees all three.
+which is almost always what you want. Pinning it to the wrong gid yields zero
+tasks **and no error**, since Asana answers HTTP 200 with an empty list — see
+the integration status section. If you do want to narrow it, read the gids
+from the API rather than from any other tool's view of your workspaces:
+
+```bash
+curl -H "Authorization: Bearer $ASANA_TOKEN" \
+  'https://app.asana.com/api/1.0/users/me?opt_fields=workspaces.gid,workspaces.name'
+```
 
 ### Getting the TickTick token
 
@@ -98,8 +102,8 @@ token **must** go through the gateway, not the site:
 JIRA_BASE_URL=https://api.atlassian.com/ex/jira/<your-cloud-id>
 ```
 
-That is the cloudId for `your-site`. Scopes are fixed at creation — to change
-them you create a new token.
+Find your cloudId at `https://your-site.atlassian.net/_edge/tenant_info`.
+Scopes are fixed at creation — to change them you create a new token.
 
 This is the better choice for dayplan, because v1 never writes: a token
 holding only those two scopes cannot modify Jira even if it leaks. The
@@ -108,12 +112,21 @@ real site URL via `/serverInfo`; set `JIRA_SITE_URL` to skip that call.
 
 `dayplan doctor` prints which mode it detected.
 
-### Jira default filter
+### Jira filter
+
+The shipped default is deliberately generic, because named statuses are
+per-project while `statusCategory` works on any workflow:
 
 ```
-assignee = currentUser() AND status NOT IN ("Under Client Review", Closed,
-  "Issue Closed", Done, "ON HOLD", "Waiting for Client", WAITING)
+assignee = currentUser() AND statusCategory != Done
 ORDER BY priority DESC, due ASC, created ASC, project ASC
+```
+
+Set `JIRA_JQL` to exclude the parked states your own workflow uses, for
+example anything waiting on a client or on hold:
+
+```
+JIRA_JQL=assignee = currentUser() AND status NOT IN (Done, Closed, "On Hold", "Waiting for Client") ORDER BY priority DESC, due ASC
 ```
 
 ### Known gap: the TickTick Inbox
@@ -128,8 +141,8 @@ come in at priority 0. TickTick and Jira priorities are normalized to 0-3.
 
 ## Running it on the ZimaBlade
 
-It lives in `/DATA/AppData/dayplan` and is reached at
-**https://dash.your-tailnet.ts.net** over Tailscale.
+It lives on the host as a registered ZimaOS app and is reached over Tailscale
+at `https://<tsdproxy-name>.<your-tailnet>.ts.net`.
 
 ```bash
 ssh zima
@@ -229,18 +242,19 @@ tsdproxy.funnel: "false"
 
 Three things about that setup are easy to get wrong:
 
-- **`network_mode: bridge` plus a published port are both required.** This
-  TSDProxy is configured with `targetHostname: host.docker.internal`, so it
-  reaches apps through the *host's* published port, not the container IP. A
-  compose-created network would be unreachable.
-- **`tsdproxy.name` must be unique.** `dash` originally belonged to TSDProxy's
-  own dashboard; that was relabelled to `tsdproxy` (in
-  `/var/lib/casaos/apps/some-random-project/docker-compose.yml`) to free the name. The
-  config sets `preventDuplicates: true`, so a clash is rejected rather than
-  silently misrouted.
-- **Node state is keyed by name** at `datadir/<provider>/<name>/`. Because
-  `datadir/default/dash/` already existed, dayplan inherited the existing
-  tailnet node instead of being renamed to `dash-1`.
+- **`network_mode: bridge` plus a published port are both required** if your
+  TSDProxy sets `targetHostname: host.docker.internal`, because it then
+  reaches apps through the *host's* published port rather than the container
+  IP. A compose-created network would be unreachable, and the proxy logs
+  nothing wrong.
+- **`tsdproxy.name` must be unique.** With `preventDuplicates: true` a clash
+  is rejected outright rather than silently misrouted. Note that TSDProxy's
+  own dashboard occupies a name too, so check
+  `tailscale status` before picking one.
+- **Node state is keyed by name** at `datadir/<provider>/<name>/`. Reusing an
+  existing name inherits that tailnet node, same address and MagicDNS name; a
+  new name registers a new node and leaves the old one offline, which also
+  means a later request for the old name gets a `-1` suffix.
 
 Funnel is off, so this is tailnet-only. Leave it that way: dayplan has no
 authentication of its own, and neither does the LAN port on 8787.

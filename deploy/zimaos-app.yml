@@ -82,7 +82,7 @@ x-casaos:
     store_app_id: dayplan
     thumbnail: ""
     tips:
-        custom: Also at https://dash.your-tailnet.ts.net over Tailscale. Uninstalling deletes /DATA/AppData/dayplan, including your saved plan.
+        custom: Also reachable over Tailscale via TSDProxy. Uninstalling deletes /DATA/AppData/dayplan, including your saved plan.
     title:
         custom: dayplan
         en_US: dayplan
