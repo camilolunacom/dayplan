@@ -77,6 +77,7 @@ class Config:
     jira_api_token: str | None
     jira_jql: str
     sync_interval_minutes: int
+    toggl_project_map: Path
 
     @property
     def jira_ready(self) -> bool:
@@ -144,4 +145,7 @@ def load_config() -> Config:
         jira_api_token=os.environ.get("JIRA_API_TOKEN") or None,
         jira_jql=os.environ.get("JIRA_JQL") or DEFAULT_JIRA_JQL,
         sync_interval_minutes=_int_env("DAYPLAN_SYNC_INTERVAL_MINUTES", 0),
+        toggl_project_map=Path(
+            os.environ.get("TOGGL_PROJECT_MAP", CONFIG_DIR / "toggl-projects.json")
+        ).expanduser(),
     )

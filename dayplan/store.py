@@ -12,7 +12,12 @@ from .config import Config
 from .dates import days_from_today, today_str
 from .db import connect, set_meta
 from .providers import SOURCES, RemoteTask, fetch_all
+from .toggl import load_rules as load_toggl_rules
+from .toggl import resolve as resolve_toggl
 
+# One list, ordered by hand. `plan.day` keeps this sentinel for every row: the
+# per-day buckets are gone, the list itself is the priority order.
+LIST = "list"
 BACKLOG = "backlog"
 
 
@@ -67,13 +72,14 @@ def _upsert(conn: sqlite3.Connection, task: RemoteTask, report: SyncReport) -> N
         json.dumps(task.tags, ensure_ascii=False),
         task.notes,
         json.dumps(task.raw, ensure_ascii=False, default=str),
+        task.toggl_project_id,
         now,
     )
     if existing is None:
         conn.execute(
             "INSERT INTO tasks(id, ref, source, external_id, title, url, project, status, "
-            "priority, due, tags, notes, raw, first_seen, last_synced, closed) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            "priority, due, tags, notes, raw, toggl_project_id, first_seen, last_synced, "
+            "closed) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
             (task.id, _next_ref(conn), task.source, task.external_id, *payload[:-1], now, now),
         )
         report.added[task.source] = report.added.get(task.source, 0) + 1
@@ -81,7 +87,8 @@ def _upsert(conn: sqlite3.Connection, task: RemoteTask, report: SyncReport) -> N
 
     conn.execute(
         "UPDATE tasks SET title = ?, url = ?, project = ?, status = ?, priority = ?, due = ?, "
-        "tags = ?, notes = ?, raw = ?, last_synced = ?, closed = 0, closed_at = NULL WHERE id = ?",
+        "tags = ?, notes = ?, raw = ?, toggl_project_id = ?, last_synced = ?, closed = 0, "
+        "closed_at = NULL WHERE id = ?",
         (*payload, task.id),
     )
     report.updated[task.source] = report.updated.get(task.source, 0) + 1
@@ -131,6 +138,14 @@ def sync(
     fetched, errors = fetch_all(cfg, targets)
     report.errors.update(errors)
 
+    # Resolve the Toggl project once per task here, where the Jira epic and the
+    # Asana project are still available, instead of teaching the browser about
+    # providers.
+    rules = load_toggl_rules(cfg.toggl_project_map)
+    for tasks in fetched.values():
+        for task in tasks:
+            task.toggl_project_id = resolve_toggl(task, rules)
+
     conn = connect(cfg.db_path)
     try:
         for source, message in errors.items():
@@ -176,7 +191,7 @@ def sync(
 
 TASK_SELECT = """
 SELECT t.id, t.ref, t.source, t.external_id, t.title, t.url, t.project, t.status,
-       t.priority, t.due, t.tags, t.notes, t.closed, t.closed_at, t.first_seen,
+       t.priority, t.due, t.tags, t.notes, t.toggl_project_id, t.closed, t.closed_at, t.first_seen,
        p.day AS plan_day, p.position AS plan_position, p.note AS plan_note,
        p.est_minutes, p.done_local
 FROM tasks t
@@ -201,6 +216,7 @@ def _row_to_task(row: sqlite3.Row) -> dict[str, Any]:
         "overdue": bool(due and (days_from_today(due) or 0) < 0),
         "tags": json.loads(row["tags"] or "[]"),
         "notes": row["notes"],
+        "toggl_project_id": row["toggl_project_id"],
         "closed": bool(row["closed"]),
         "closed_at": row["closed_at"],
         "day": row["plan_day"],
@@ -212,10 +228,33 @@ def _row_to_task(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def _sort_key(task: dict[str, Any]) -> tuple:
-    """Backlog ordering: overdue first, then by due date, then priority, then title."""
+    """Default ordering for anything not yet placed by hand.
+
+    Overdue first, then by due date, then priority, then title. This only
+    decides the tail of the list; the head is whatever he dragged.
+    """
     due_in = task["due_in_days"]
     has_due = 0 if due_in is not None else 1
     return (has_due, due_in if due_in is not None else 0, -task["priority"], task["title"].lower())
+
+
+def ordered_tasks(conn: sqlite3.Connection, include_done: bool = True) -> list[dict[str, Any]]:
+    """The single list: hand-ordered items first, then the rest by default order.
+
+    Nothing is auto-assigned a position, so a fresh sync does not hand you
+    fifty items to sort. Dragging one pulls it into the ordered head.
+    """
+    tasks = list_tasks(conn, include_done=include_done)
+    placed = [t for t in tasks if t["position"] is not None]
+    loose = [t for t in tasks if t["position"] is None]
+    placed.sort(key=lambda t: t["position"])
+    loose.sort(key=_sort_key)
+    pinned_ids = {t["id"] for t in placed}
+    result = placed + loose
+    for index, task in enumerate(result):
+        task["rank"] = index
+        task["pinned"] = task["id"] in pinned_ids
+    return result
 
 
 def list_tasks(
@@ -313,8 +352,11 @@ def resolve(conn: sqlite3.Connection, token: str) -> str:
 
 
 def _positions(conn: sqlite3.Connection, day: str) -> list[str]:
+    """Task ids that have a manual position, in order. NULL positions are not
+    part of the ordering and must not be renumbered into it."""
     rows = conn.execute(
-        "SELECT task_id FROM plan WHERE day = ? ORDER BY position", (day,)
+        "SELECT task_id FROM plan WHERE day = ? AND position IS NOT NULL ORDER BY position",
+        (day,),
     ).fetchall()
     return [row["task_id"] for row in rows]
 
@@ -356,11 +398,18 @@ def assign(
 
 
 def unassign(conn: sqlite3.Connection, task_id: str) -> None:
-    """Drop a task off the calendar entirely (back to the pending pool)."""
+    """Clear the manual position so the task falls back to the default order.
+
+    The note, estimate and local tick are kept: unpinning is a statement
+    about ordering, not a reason to throw away what he wrote.
+    """
     row = conn.execute("SELECT day FROM plan WHERE task_id = ?", (task_id,)).fetchone()
-    conn.execute("DELETE FROM plan WHERE task_id = ?", (task_id,))
-    if row:
-        _rewrite(conn, row["day"], _positions(conn, row["day"]))
+    if not row:
+        return
+    conn.execute(
+        "UPDATE plan SET position = NULL, updated_at = ? WHERE task_id = ?", (_now(), task_id)
+    )
+    _rewrite(conn, row["day"], _positions(conn, row["day"]))
     conn.commit()
 
 
@@ -398,6 +447,16 @@ def set_order(conn: sqlite3.Connection, day: str, ids: list[str]) -> list[str]:
     return final
 
 
+def set_list_order(conn: sqlite3.Connection, ids: list[str]) -> list[str]:
+    """Pin these ids to the head of the single list, in this order."""
+    return set_order(conn, LIST, ids)
+
+
+def current_task(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """The featured task: first in the list that is not ticked off."""
+    return next_task(ordered_tasks(conn))
+
+
 def update_plan(
     conn: sqlite3.Connection,
     task_id: str,
@@ -407,9 +466,18 @@ def update_plan(
     done: bool | None = None,
     day: str | None = None,
 ) -> dict[str, Any] | None:
-    """Update the local-only fields. Creates the plan row if needed."""
-    if not conn.execute("SELECT 1 FROM plan WHERE task_id = ?", (task_id,)).fetchone():
-        assign(conn, task_id, day or today_str())
+    """Update the local-only fields.
+
+    Creates the plan row with no position if there is none, so annotating a
+    task never changes where it sits in the list.
+    """
+    if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
+        raise ResolveError(f"unknown task id {task_id!r}")
+    conn.execute(
+        "INSERT INTO plan(task_id, day, position, updated_at) VALUES(?, ?, NULL, ?) "
+        "ON CONFLICT(task_id) DO NOTHING",
+        (task_id, day or LIST, _now()),
+    )
 
     sets: list[str] = []
     params: list[Any] = []
@@ -426,8 +494,6 @@ def update_plan(
         sets.append("updated_at = ?")
         params.append(_now())
         conn.execute(f"UPDATE plan SET {', '.join(sets)} WHERE task_id = ?", (*params, task_id))
-    if day is not None:
-        assign(conn, task_id, day)
     conn.commit()
     return get_task(conn, task_id)
 
@@ -535,16 +601,18 @@ def sync_log(conn: sqlite3.Connection, limit: int = 30, source: str | None = Non
 
 def summary(conn: sqlite3.Connection, day: str | None = None) -> dict[str, Any]:
     day = day or today_str()
-    plan = list_tasks(conn, day=day)
-    pending = list_tasks(conn, unplanned=True)
+    tasks = ordered_tasks(conn)
+    open_tasks = [t for t in tasks if not t["done"]]
 
     by_source: dict[str, int] = {}
-    for task in pending:
+    for task in open_tasks:
         by_source[task["source"]] = by_source.get(task["source"], 0) + 1
 
-    overdue = [t for t in pending if t["overdue"]]
-    due_today = [t for t in pending if t["due_in_days"] == 0]
-    estimated = sum(t["est_minutes"] or 0 for t in plan if not t["done"])
+    overdue = [t for t in open_tasks if t["overdue"]]
+    due_today = [t for t in open_tasks if t["due_in_days"] == 0]
+    estimated = sum(t["est_minutes"] or 0 for t in open_tasks)
+    plan = tasks
+    pending = open_tasks
 
     last_sync = {}
     for row in conn.execute("SELECT key, value FROM meta WHERE key LIKE 'last_sync:%'").fetchall():
@@ -552,14 +620,15 @@ def summary(conn: sqlite3.Connection, day: str | None = None) -> dict[str, Any]:
 
     return {
         "day": day,
-        "next": next_task(plan),
-        "plan": plan,
-        "plan_count": len(plan),
-        "plan_open": len([t for t in plan if not t["done"]]),
-        "plan_done": len([t for t in plan if t["done"]]),
-        "plan_estimated_minutes": estimated,
-        "pending_count": len(pending),
-        "pending_by_source": by_source,
+        "current": next_task(tasks),
+        "tasks": tasks,
+        "count": len(tasks),
+        "open_count": len(open_tasks),
+        "done_count": len(tasks) - len(open_tasks),
+        "pinned_count": len([t for t in tasks if t["pinned"]]),
+        "estimated_minutes": estimated,
+        "unestimated_count": len([t for t in open_tasks if not t["est_minutes"]]),
+        "by_source": by_source,
         "overdue_count": len(overdue),
         "overdue": overdue[:20],
         "due_today_count": len(due_today),

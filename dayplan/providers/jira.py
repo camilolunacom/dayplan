@@ -84,6 +84,7 @@ def _to_task(issue: dict[str, Any], base_url: str) -> RemoteTask:
         priority=PRIORITY_MAP.get(priority_name, 0),
         due=fields.get("duedate") or None,
         tags=[str(label) for label in (fields.get("labels") or [])],
+        parent=parent,
         notes=f"parent: {parent}" if parent else None,
         raw=issue,
     )

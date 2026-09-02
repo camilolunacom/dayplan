@@ -11,8 +11,8 @@ import typer
 
 from . import store
 from .config import load_config
-from .dates import parse_day, today_str
 from .db import connect, get_meta
+from .toggl import load_rules as load_toggl_rules
 
 app = typer.Typer(
     add_completion=False,
@@ -87,7 +87,13 @@ def _print_tasks(tasks: list[dict[str, Any]], numbered: bool = False) -> None:
         typer.echo("  (nothing)")
         return
     upcoming = store.next_task(tasks) if numbered else None
+    # The divider only means something when part of the list is hand-ordered.
+    has_pinned = any(t.get("pinned") for t in tasks)
+    shown_divider = False
     for index, task in enumerate(tasks, start=1):
+        if numbered and has_pinned and not shown_divider and not task.get("pinned"):
+            typer.secho("     ── unordered below ──", fg=typer.colors.BRIGHT_BLACK)
+            shown_divider = True
         if numbered:
             mark = "x" if task["done"] else " "
             # The task to work on now gets an arrow instead of its number.
@@ -134,6 +140,13 @@ def doctor() -> None:
     typer.echo(f"  token type    {'scoped (needs read:jira-work + read:jira-user)' if scoped else 'unscoped / site URL'}")
     typer.echo(f"  links via     {cfg.jira_site_url or 'resolved from /serverInfo at sync time'}")
     typer.echo(f"  jql           {cfg.jira_jql}")
+    rules = load_toggl_rules(cfg.toggl_project_map)
+    total = sum(len(v) for v in rules.values())
+    typer.echo(f"toggl map       {cfg.toggl_project_map}")
+    typer.echo(
+        f"  rules         {total} across {', '.join(sorted(rules)) or 'nothing'}"
+        f"{'' if total else '  (no mapping: every task tracks without a project)'}"
+    )
     enabled = cfg.enabled_sources()
     typer.echo(f"enabled         {', '.join(enabled) if enabled else 'none'}")
 
@@ -182,33 +195,33 @@ def sync(
 @app.command("list")
 def list_cmd(
     source: str = typer.Option(None, "--source", "-s"),
-    day: str = typer.Option(None, "--day", "-d", help="Only tasks planned for this day."),
-    pending: bool = typer.Option(False, "--pending", "-p", help="Only unplanned tasks."),
     query: str = typer.Option(None, "--query", "-q", help="Substring of title or project."),
-    all_: bool = typer.Option(False, "--all", "-a", help="Include closed tasks."),
     limit: int = typer.Option(0, "--limit", "-n"),
     json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """List tasks."""
+    """The list, in priority order. ▶ marks the one to work on now."""
     conn = _conn()
     try:
-        tasks = store.list_tasks(
-            conn,
-            source=source,
-            day=parse_day(day) if day else None,
-            unplanned=pending,
-            include_closed=all_,
-            query=query,
-        )
+        tasks = store.ordered_tasks(conn)
     finally:
         conn.close()
+    if source:
+        tasks = [t for t in tasks if t["source"] == source]
+    if query:
+        needle = query.lower()
+        tasks = [
+            t
+            for t in tasks
+            if needle in t["title"].lower() or needle in (t["project"] or "").lower()
+        ]
     if limit > 0:
         tasks = tasks[:limit]
     if json:
         _echo_json(tasks)
         return
-    typer.echo(f"{len(tasks)} task(s)")
-    _print_tasks(tasks, numbered=bool(day))
+    pinned = len([t for t in tasks if t["pinned"]])
+    typer.echo(f"{len(tasks)} task(s), {pinned} ordered by hand")
+    _print_tasks(tasks, numbered=True)
 
 
 @app.command()
@@ -230,120 +243,69 @@ def show(ref: str, json: bool = typer.Option(False, "--json")) -> None:
 
 
 @app.command()
-def plan(
-    day: str = typer.Argument("today", help="today, tomorrow, +2 or YYYY-MM-DD"),
-    json: bool = typer.Option(False, "--json"),
-) -> None:
-    """Show the ordered plan for a day."""
-    target = parse_day(day)
+def current(json: bool = typer.Option(False, "--json")) -> None:
+    """The featured task: first in the list that is not done."""
     conn = _conn()
     try:
-        tasks = store.list_tasks(conn, day=target)
+        task = store.current_task(conn)
     finally:
         conn.close()
     if json:
-        _echo_json({"day": target, "plan": tasks})
+        _echo_json(task)
         return
-    est = _fmt_minutes(sum(t["est_minutes"] or 0 for t in tasks if not t["done"]))
-    open_count = len([t for t in tasks if not t["done"]])
-    typer.echo(f"Plan {target} — {open_count} open of {len(tasks)}, estimated {est}")
-    _print_tasks(tasks, numbered=True)
-
-
-@app.command()
-def today(json: bool = typer.Option(False, "--json")) -> None:
-    """Shortcut for `dayplan plan today`."""
-    plan(today_str(), json)
+    if not task:
+        typer.echo("Nothing left in the list.")
+        raise typer.Exit()
+    typer.secho("Now:", fg=typer.colors.CYAN, bold=True)
+    typer.echo(_task_line(task, prefix="  \u25b6 "))
+    if task["url"]:
+        typer.echo(f"    {task['url']}")
 
 
 @app.command("next")
-def next_cmd(
-    day: str = typer.Option("today", "--day", "-d"),
-    json: bool = typer.Option(False, "--json"),
-) -> None:
-    """Show the single task to work on now: first unfinished one in the plan."""
-    target = parse_day(day)
-    conn = _conn()
-    try:
-        upcoming = store.next_task(store.list_tasks(conn, day=target))
-    finally:
-        conn.close()
-    if json:
-        _echo_json(upcoming)
-        return
-    if not upcoming:
-        typer.echo(f"Nothing left to do on {target}.")
-        raise typer.Exit()
-    typer.secho(f"Next on {target}:", fg=typer.colors.CYAN, bold=True)
-    typer.echo(_task_line(upcoming, prefix="  ▶ "))
-    if upcoming["url"]:
-        typer.echo(f"    {upcoming['url']}")
+def next_cmd(json: bool = typer.Option(False, "--json")) -> None:
+    """Alias of `current`."""
+    current(json)
 
 
 @app.command()
-def add(
-    refs: list[str] = typer.Argument(..., help="Task refs (#12, TN-1171, id, or title text)."),
-    day: str = typer.Option("today", "--day", "-d"),
-    position: int = typer.Option(None, "--pos", help="0-based insert index; default appends."),
-) -> None:
-    """Put tasks on a day."""
-    target = parse_day(day)
+def order(refs: list[str] = typer.Argument(..., help="Refs in the order you want them.")) -> None:
+    """Pin these tasks to the top of the list, in this order.
+
+    Anything already pinned that you leave out keeps its relative order and
+    follows after, so a partial reorder never drops work.
+    """
     conn = _conn()
     try:
-        for offset, task_id in enumerate(_resolve_many(conn, refs)):
-            pos = None if position is None else position + offset
-            result = store.assign(conn, task_id, target, pos)
-            typer.echo(f"{task_id} -> {target} #{result['position'] + 1}")
+        store.set_list_order(conn, _resolve_many(conn, refs))
+        tasks = store.ordered_tasks(conn)
     finally:
         conn.close()
+    _print_tasks(tasks[: max(8, len(refs) + 3)], numbered=True)
 
 
 @app.command()
-def order(
-    day: str = typer.Argument(..., help="today, tomorrow or YYYY-MM-DD"),
-    refs: list[str] = typer.Argument(..., help="Task refs, in the order you want them."),
-) -> None:
-    """Set the exact order of a day. Tasks not listed stay, appended after."""
-    target = parse_day(day)
-    conn = _conn()
-    try:
-        final = store.set_order(conn, target, _resolve_many(conn, refs))
-        tasks = store.list_tasks(conn, day=target)
-    finally:
-        conn.close()
-    typer.echo(f"Plan {target} — {len(final)} task(s)")
-    _print_tasks(tasks, numbered=True)
-
-
-@app.command()
-def move(
-    ref: str,
-    day: str = typer.Option(None, "--day", "-d"),
-    position: int = typer.Option(None, "--pos", help="1-based slot in the day."),
-) -> None:
-    """Move a task to another day and/or another slot."""
-    if day is None and position is None:
-        _fail("give at least --day or --pos")
+def top(ref: str) -> None:
+    """Make one task the current one, moving it to the head of the list."""
     conn = _conn()
     try:
         task_id = _resolve_many(conn, [ref])[0]
-        current = store.get_task(conn, task_id) or {}
-        target = parse_day(day) if day else (current.get("day") or today_str())
-        index = None if position is None else max(0, position - 1)
-        result = store.assign(conn, task_id, target, index)
-        typer.echo(f"{task_id} -> {target} #{result['position'] + 1}")
+        pinned = [t["id"] for t in store.ordered_tasks(conn) if t["pinned"]]
+        store.set_list_order(conn, [task_id] + [i for i in pinned if i != task_id])
+        tasks = store.ordered_tasks(conn)
     finally:
         conn.close()
+    _print_tasks(tasks[:6], numbered=True)
 
 
 @app.command()
-def drop(refs: list[str] = typer.Argument(...)) -> None:
-    """Take tasks off the calendar (they go back to the pending pool)."""
+def unpin(refs: list[str] = typer.Argument(...)) -> None:
+    """Drop a manual position; the task falls back to the default order."""
     conn = _conn()
     try:
         for task_id in _resolve_many(conn, refs):
             store.unassign(conn, task_id)
-            typer.echo(f"{task_id} -> pending")
+            typer.echo(f"{task_id} unpinned")
     finally:
         conn.close()
 
@@ -354,7 +316,7 @@ def note(ref: str, text: str = typer.Argument(..., help="Use '' to clear.")) -> 
     conn = _conn()
     try:
         task_id = _resolve_many(conn, [ref])[0]
-        store.update_plan(conn, task_id, note=text)
+        store.update_plan(conn, task_id, note=text, day=store.LIST)
         typer.echo(f"{task_id} note set")
     finally:
         conn.close()
@@ -366,7 +328,7 @@ def est(ref: str, minutes: int = typer.Argument(..., help="0 clears the estimate
     conn = _conn()
     try:
         task_id = _resolve_many(conn, [ref])[0]
-        store.update_plan(conn, task_id, est_minutes=minutes)
+        store.update_plan(conn, task_id, est_minutes=minutes, day=store.LIST)
         typer.echo(f"{task_id} estimate {_fmt_minutes(minutes)}")
     finally:
         conn.close()
@@ -381,7 +343,7 @@ def done(
     conn = _conn()
     try:
         for task_id in _resolve_many(conn, refs):
-            store.update_plan(conn, task_id, done=not undo)
+            store.update_plan(conn, task_id, done=not undo, day=store.LIST)
             typer.echo(f"{task_id} {'reopened' if undo else 'done (local only)'}")
     finally:
         conn.close()
@@ -458,24 +420,31 @@ def log_cmd(
 
 @app.command()
 def summary(
-    day: str = typer.Option("today", "--day", "-d"),
     json: bool = typer.Option(True, "--json/--text", help="JSON by default: this is the agent view."),
 ) -> None:
-    """Compact snapshot of the workload. Meant to be piped into an agent."""
+    """Compact snapshot of the list. Meant to be piped into an agent."""
     conn = _conn()
     try:
-        data = store.summary(conn, parse_day(day))
+        data = store.summary(conn)
     finally:
         conn.close()
     if json:
         _echo_json(data)
         return
-    typer.echo(f"Day {data['day']}")
-    typer.echo(f"  planned    {data['plan_open']} open / {data['plan_count']} total, {_fmt_minutes(data['plan_estimated_minutes'])}")
-    by_source = "  ".join(f"{k} {v}" for k, v in sorted(data["pending_by_source"].items()))
-    typer.echo(f"  pending    {data['pending_count']}  ({by_source or 'none'})")
-    typer.echo(f"  overdue    {data['overdue_count']}")
-    typer.echo(f"  due today  {data['due_today_count']}")
+    now = data["current"]
+    typer.echo(f"now        {now['title'] if now else '(nothing)'}")
+    typer.echo(
+        f"list       {data['open_count']} open / {data['count']} total, "
+        f"{data['pinned_count']} ordered by hand"
+    )
+    by_source = "  ".join(f"{k} {v}" for k, v in sorted(data["by_source"].items()))
+    typer.echo(f"sources    {by_source or 'none'}")
+    typer.echo(
+        f"estimated  {_fmt_minutes(data['estimated_minutes'])} "
+        f"({data['unestimated_count']} without an estimate)"
+    )
+    typer.echo(f"overdue    {data['overdue_count']}")
+    typer.echo(f"due today  {data['due_today_count']}")
 
 
 @app.command()

@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import store
 from .config import load_config
-from .dates import parse_day, today_str
+from .dates import today_str
 from .db import connect
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -33,13 +33,6 @@ def get_conn() -> Iterator[sqlite3.Connection]:
         yield conn
     finally:
         conn.close()
-
-
-def _day(value: str | None) -> str:
-    try:
-        return parse_day(value)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 async def _periodic_sync(minutes: int) -> None:
@@ -89,20 +82,14 @@ def create_app() -> FastAPI:
         return {"ok": True, "sources": cfg.enabled_sources()}
 
     @app.get("/api/state")
-    def state(
-        day: str | None = Query(None),
-        conn: sqlite3.Connection = Depends(get_conn),
-    ) -> dict[str, Any]:
+    def state(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
         cfg = load_config()
-        target = _day(day)
-        plan = store.list_tasks(conn, day=target)
+        tasks = store.ordered_tasks(conn)
         return {
-            "day": target,
             "today": today_str(),
-            "next": store.next_task(plan),
-            "plan": plan,
-            "pending": store.list_tasks(conn, unplanned=True),
-            "summary": store.summary(conn, target),
+            "current": store.next_task(tasks),
+            "tasks": tasks,
+            "summary": store.summary(conn),
             "sources": cfg.enabled_sources(),
             "integrations": store.integrations(conn, cfg, history=3),
         }
@@ -125,27 +112,17 @@ def create_app() -> FastAPI:
     @app.get("/api/tasks")
     def tasks(
         source: str | None = Query(None),
-        day: str | None = Query(None),
-        unplanned: bool = Query(False),
         include_closed: bool = Query(False),
         q: str | None = Query(None),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> list[dict[str, Any]]:
         return store.list_tasks(
-            conn,
-            source=source,
-            day=_day(day) if day else None,
-            unplanned=unplanned,
-            include_closed=include_closed,
-            query=q,
+            conn, source=source, include_closed=include_closed, query=q
         )
 
     @app.get("/api/summary")
-    def summary(
-        day: str | None = Query(None),
-        conn: sqlite3.Connection = Depends(get_conn),
-    ) -> dict[str, Any]:
-        return store.summary(conn, _day(day))
+    def summary(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
+        return store.summary(conn)
 
     @app.post("/api/sync")
     def sync(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
@@ -153,47 +130,30 @@ def create_app() -> FastAPI:
         report = store.sync(load_config(), sources, trigger="manual")
         return report.as_dict()
 
-    @app.put("/api/plan/{day}/order")
+    @app.put("/api/order")
     def set_order(
-        day: str,
         payload: dict[str, Any] = Body(...),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> dict[str, Any]:
+        """Pin the given ids to the head of the list, in this order."""
         ids = payload.get("ids")
         if not isinstance(ids, list):
             raise HTTPException(status_code=400, detail="body needs an 'ids' array")
         try:
-            final = store.set_order(conn, _day(day), [str(i) for i in ids])
+            final = store.set_list_order(conn, [str(i) for i in ids])
         except store.ResolveError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return {"day": _day(day), "ids": final}
+        return {"ids": final}
 
-    @app.post("/api/plan/{day}/tasks")
-    def add_to_day(
-        day: str,
-        payload: dict[str, Any] = Body(...),
-        conn: sqlite3.Connection = Depends(get_conn),
-    ) -> dict[str, Any]:
-        task_id = payload.get("task_id")
-        if not task_id:
-            raise HTTPException(status_code=400, detail="body needs 'task_id'")
-        position = payload.get("position")
-        try:
-            resolved = store.resolve(conn, str(task_id))
-            return store.assign(conn, resolved, _day(day), position)
-        except store.ResolveError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    @app.delete("/api/plan/tasks/{task_id}")
-    def remove_from_plan(
-        task_id: str, conn: sqlite3.Connection = Depends(get_conn)
-    ) -> dict[str, Any]:
+    @app.delete("/api/order/{task_id}")
+    def unpin(task_id: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
+        """Drop a manual position; the task falls back to the default order."""
         try:
             resolved = store.resolve(conn, task_id)
         except store.ResolveError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         store.unassign(conn, resolved)
-        return {"task_id": resolved, "day": None}
+        return {"task_id": resolved, "pinned": False}
 
     @app.patch("/api/tasks/{task_id}/plan")
     def patch_plan(
@@ -212,7 +172,7 @@ def create_app() -> FastAPI:
             note=payload.get("note"),
             est_minutes=int(est) if est is not None else None,
             done=payload.get("done"),
-            day=_day(payload["day"]) if payload.get("day") else None,
+            day=store.LIST,
         )
         return result or {}
 

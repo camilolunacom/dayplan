@@ -3,26 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>dayplan</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header>
   <div class="brand">dayplan</div>
-
-  <div class="daynav">
-    <button id="prev-day" title="Previous day">&lsaquo;</button>
-    <input type="date" id="day-input">
-    <button id="next-day" title="Next day">&rsaquo;</button>
-    <button id="go-today" class="ghost">Today</button>
-  </div>
-
   <div class="spacer"></div>
-
   <div class="stats" id="stats"></div>
   <div class="integrations" id="integrations"></div>
   <button id="sync" class="primary">Sync</button>
 </header>
+
+<main>
+  <div class="listbar">
+    <h2>The list <span class="count" id="list-count">0</span></h2>
+    <input type="search" id="search" placeholder="filter…" autocomplete="off">
+    <div class="chips" id="source-chips"></div>
+  </div>
+
+  <div class="list" id="task-list"></div>
+  <div class="hint">Drag to set the order. Whatever ends up first becomes the task you are working on.</div>
+</main>
 
 <div class="drawer" id="drawer" hidden>
   <div class="drawer-head">
@@ -31,29 +35,6 @@
   </div>
   <div id="drawer-body"></div>
 </div>
-
-<main>
-  <section class="panel" id="panel-pending">
-    <div class="panel-head">
-      <h2>Pending <span class="count" id="pending-count">0</span></h2>
-      <div class="filters">
-        <input type="search" id="search" placeholder="filter…" autocomplete="off">
-        <div class="chips" id="source-chips"></div>
-      </div>
-    </div>
-    <div class="list" id="pending-list" data-list="pending"></div>
-  </section>
-
-  <section class="panel" id="panel-plan">
-    <div class="panel-head">
-      <h2>Plan <span class="count" id="plan-count">0</span></h2>
-      <div class="planmeta" id="plan-meta"></div>
-      <div class="nextline" id="next-line"></div>
-    </div>
-    <div class="list" id="plan-list" data-list="plan"></div>
-    <div class="hint">Drag tasks in here, in the order you want to do them.</div>
-  </section>
-</main>
 
 <div id="toast" class="toast"></div>
 <script src="/static/app.js"></script>

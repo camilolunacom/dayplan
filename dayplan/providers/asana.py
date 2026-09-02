@@ -160,6 +160,7 @@ def _collect_subtasks(
         if cfg.asana_only_mine and _assignee_gid(row) != my_gid:
             continue
         task = _to_task(row, parent_task.project)
+        task.parent = str(parent.get("gid"))
         # Carry the parent so a subtask does not read as an orphan item.
         task.project = f"{parent_task.project} › {parent.get('name')}"
         out.append(task)

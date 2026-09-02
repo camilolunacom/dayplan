@@ -26,6 +26,8 @@ class RemoteTask:
     due: str | None = None  # YYYY-MM-DD
     tags: list[str] = field(default_factory=list)
     notes: str | None = None
+    parent: str | None = None          # Jira epic key, Asana parent task gid
+    toggl_project_id: int | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property

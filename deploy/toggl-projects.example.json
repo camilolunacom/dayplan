@@ -1,0 +1,12 @@
+{
+  "asana": [
+    { "project_contains": "Open Path", "toggl_project_id": 197054431 },
+    { "project_contains": "Linnworks", "toggl_project_id": 218695668 }
+  ],
+  "jira": [
+    { "parent": "ALHM-7", "toggl_project_id": 209356898 },
+    { "parent": "ALHM-6", "toggl_project_id": 210510092 },
+    { "key_prefix": "TN", "toggl_project_id": 182545135 },
+    { "key_prefix": "TKT", "toggl_project_id": 205762591 }
+  ]
+}
