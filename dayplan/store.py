@@ -11,7 +11,7 @@ from typing import Any
 from .config import Config
 from .dates import days_from_today, today_str
 from .db import connect, set_meta
-from .providers import RemoteTask, fetch_all
+from .providers import SOURCES, RemoteTask, fetch_all
 
 BACKLOG = "backlog"
 
@@ -89,9 +89,32 @@ def _upsert(conn: sqlite3.Connection, task: RemoteTask, report: SyncReport) -> N
         report.reopened[task.source] = report.reopened.get(task.source, 0) + 1
 
 
-def sync(cfg: Config, sources: list[str] | None = None) -> SyncReport:
+def _record_attempt(
+    conn: sqlite3.Connection,
+    source: str,
+    started: str,
+    *,
+    ok: bool,
+    fetched: int = 0,
+    added: int = 0,
+    updated: int = 0,
+    closed: int = 0,
+    error: str | None = None,
+    trigger: str = "manual",
+) -> None:
+    conn.execute(
+        "INSERT INTO sync_log(source, started_at, finished_at, ok, fetched, added, "
+        "updated, closed, error, trigger) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (source, started, _now(), 1 if ok else 0, fetched, added, updated, closed, error, trigger),
+    )
+
+
+def sync(
+    cfg: Config, sources: list[str] | None = None, trigger: str = "manual"
+) -> SyncReport:
     """Pull from every configured (or requested) source and reconcile the cache."""
     report = SyncReport()
+    started = _now()
     requested = sources or cfg.enabled_sources()
     if not requested:
         report.errors["config"] = "No source is configured. Run `dayplan doctor`."
@@ -110,6 +133,9 @@ def sync(cfg: Config, sources: list[str] | None = None) -> SyncReport:
 
     conn = connect(cfg.db_path)
     try:
+        for source, message in errors.items():
+            _record_attempt(conn, source, started, ok=False, error=message, trigger=trigger)
+
         for source, tasks in fetched.items():
             seen = set()
             for task in tasks:
@@ -128,6 +154,17 @@ def sync(cfg: Config, sources: list[str] | None = None) -> SyncReport:
                 )
                 report.closed[source] = len(gone)
             set_meta(conn, f"last_sync:{source}", _now())
+            _record_attempt(
+                conn,
+                source,
+                started,
+                ok=True,
+                fetched=len(tasks),
+                added=report.added.get(source, 0),
+                updated=report.updated.get(source, 0),
+                closed=report.closed.get(source, 0),
+                trigger=trigger,
+            )
         set_meta(conn, "last_sync", _now())
         conn.commit()
     finally:
@@ -401,6 +438,99 @@ def update_plan(
 def next_task(plan: list[dict[str, Any]]) -> dict[str, Any] | None:
     """The one to work on now: first in plan order that is not done yet."""
     return next((task for task in plan if not task["done"]), None)
+
+
+# ------------------------------------------------------------------- integrations
+
+
+def _why_not_configured(source: str, cfg: Config) -> str:
+    return {
+        "ticktick": "TICKTICK_TOKEN is not set",
+        "asana": "ASANA_TOKEN is not set",
+        "jira": "needs JIRA_BASE_URL, JIRA_EMAIL and JIRA_API_TOKEN",
+    }.get(source, "not configured")
+
+
+def integrations(conn: sqlite3.Connection, cfg: Config, history: int = 5) -> list[dict[str, Any]]:
+    """Per-source health, for the dashboard status strip and `dayplan status`.
+
+    Distinguishes four states, because "worked but returned nothing" is the
+    failure mode that looks like success and costs the most time:
+
+      off      not configured at all
+      error    the last attempt failed; `error` says why
+      empty    the last attempt succeeded but the provider returned 0 tasks
+      ok       synced and holding tasks
+    """
+    enabled = set(cfg.enabled_sources())
+    result = []
+    for source in SOURCES:
+        open_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM tasks WHERE source = ? AND closed = 0", (source,)
+        ).fetchone()["n"]
+
+        rows = conn.execute(
+            "SELECT started_at, finished_at, ok, fetched, added, updated, closed, error, "
+            "trigger FROM sync_log WHERE source = ? ORDER BY finished_at DESC, id DESC LIMIT ?",
+            (source, history),
+        ).fetchall()
+        attempts = [dict(row) for row in rows]
+        for attempt in attempts:
+            attempt["ok"] = bool(attempt["ok"])
+        last = attempts[0] if attempts else None
+
+        last_success = conn.execute(
+            "SELECT finished_at FROM sync_log WHERE source = ? AND ok = 1 "
+            "ORDER BY finished_at DESC, id DESC LIMIT 1",
+            (source,),
+        ).fetchone()
+
+        configured = source in enabled
+        if not configured:
+            state = "off"
+        elif last is None:
+            state = "never"
+        elif not last["ok"]:
+            state = "error"
+        elif last["fetched"] == 0:
+            state = "empty"
+        else:
+            state = "ok"
+
+        result.append(
+            {
+                "source": source,
+                "configured": configured,
+                "state": state,
+                "detail": None if configured else _why_not_configured(source, cfg),
+                "open_count": open_count,
+                "last_attempt_at": last["finished_at"] if last else None,
+                "last_success_at": last_success["finished_at"] if last_success else None,
+                "last_error": last["error"] if last and not last["ok"] else None,
+                "last_fetched": last["fetched"] if last else None,
+                "history": attempts,
+            }
+        )
+    return result
+
+
+def sync_log(conn: sqlite3.Connection, limit: int = 30, source: str | None = None) -> list[dict[str, Any]]:
+    """Raw recent attempts, newest first."""
+    if source:
+        rows = conn.execute(
+            "SELECT * FROM sync_log WHERE source = ? ORDER BY finished_at DESC, id DESC LIMIT ?",
+            (source, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM sync_log ORDER BY finished_at DESC, id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    out = []
+    for row in rows:
+        item = dict(row)
+        item["ok"] = bool(item["ok"])
+        out.append(item)
+    return out
 
 
 def summary(conn: sqlite3.Connection, day: str | None = None) -> dict[str, Any]:

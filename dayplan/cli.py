@@ -146,7 +146,7 @@ def sync(
     json: bool = typer.Option(False, "--json"),
 ) -> None:
     """Pull tasks from every configured source."""
-    report = store.sync(load_config(), list(source) if source else None)
+    report = store.sync(load_config(), list(source) if source else None, trigger="cli")
     if json:
         _echo_json(report.as_dict())
         raise typer.Exit(code=1 if report.errors else 0)
@@ -371,6 +371,75 @@ def done(
             typer.echo(f"{task_id} {'reopened' if undo else 'done (local only)'}")
     finally:
         conn.close()
+
+
+STATE_LABEL = {
+    "ok": ("ok", typer.colors.GREEN),
+    "empty": ("EMPTY", typer.colors.YELLOW),
+    "error": ("ERROR", typer.colors.RED),
+    "never": ("never synced", typer.colors.YELLOW),
+    "off": ("not configured", typer.colors.BRIGHT_BLACK),
+}
+
+
+@app.command()
+def status(json: bool = typer.Option(False, "--json")) -> None:
+    """Health of each integration: what it last did, and what went wrong."""
+    cfg = load_config()
+    conn = _conn()
+    try:
+        rows = store.integrations(conn, cfg)
+    finally:
+        conn.close()
+    if json:
+        _echo_json(rows)
+        return
+
+    for row in rows:
+        label, color = STATE_LABEL.get(row["state"], (row["state"], None))
+        typer.echo(f"{row['source']:<10} ", nl=False)
+        typer.secho(f"{label:<14}", fg=color, nl=False)
+        typer.echo(f" {row['open_count']:>3} open   last {row['last_attempt_at'] or 'never'}")
+        if row["detail"]:
+            typer.echo(f"           {row['detail']}")
+        if row["last_error"]:
+            typer.secho(f"           {row['last_error']}", fg=typer.colors.RED)
+        if row["state"] == "empty":
+            typer.secho(
+                "           synced fine but the provider returned 0 tasks — check the "
+                "filters (workspaces / JQL / projects), not the token",
+                fg=typer.colors.YELLOW,
+            )
+
+
+@app.command("log")
+def log_cmd(
+    limit: int = typer.Option(20, "--limit", "-n"),
+    source: str = typer.Option(None, "--source", "-s"),
+    json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Recent sync attempts, newest first."""
+    conn = _conn()
+    try:
+        rows = store.sync_log(conn, limit=limit, source=source)
+    finally:
+        conn.close()
+    if json:
+        _echo_json(rows)
+        return
+    if not rows:
+        typer.echo("no sync attempts recorded yet")
+        return
+    for row in rows:
+        mark = "ok " if row["ok"] else "ERR"
+        color = typer.colors.GREEN if row["ok"] else typer.colors.RED
+        typer.secho(f"{mark} ", fg=color, nl=False)
+        typer.echo(
+            f"{row['finished_at']}  {row['source']:<9} {row['trigger'] or '?':<9} "
+            f"fetched {row['fetched']:>3}  +{row['added']} ~{row['updated']} -{row['closed']}"
+        )
+        if row["error"]:
+            typer.secho(f"    {row['error']}", fg=typer.colors.RED)
 
 
 @app.command()

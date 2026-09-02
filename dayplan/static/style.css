@@ -72,6 +72,129 @@ button.primary:hover { filter: brightness(1.08); }
 button.primary[disabled] { opacity: 0.55; cursor: progress; }
 button.ghost { background: transparent; color: var(--muted); }
 
+/* ------------------------------------------------- integration status */
+
+.integrations { display: flex; gap: 6px; align-items: center; }
+
+.integ {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+}
+.integ:hover { border-color: var(--accent); color: var(--text); }
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--muted);
+}
+/* Prefixed: a bare `.empty` would collide with the empty-list placeholder,
+   whose 16px padding inflates a 7px dot into a 32px blob. */
+.dot.s-ok { background: var(--ok); }
+.dot.s-empty { background: var(--warn); }
+.dot.s-error { background: var(--danger); }
+.dot.s-never { background: var(--warn); }
+.dot.s-off { background: #4a5261; }
+
+.integ.state-error { border-color: rgba(255,107,107,0.5); color: var(--danger); }
+.integ.state-empty { border-color: rgba(255,180,84,0.5); color: var(--warn); }
+.integ.state-off { opacity: 0.6; }
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: min(560px, 94vw);
+  height: 100vh;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  box-shadow: -12px 0 32px -12px rgba(0,0,0,0.6);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* `display: flex` above beats the [hidden] attribute's default display:none,
+   so the drawer needs this or it is always open. */
+.drawer[hidden] { display: none; }
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+.drawer-head h3 { margin: 0; font-size: 14px; }
+
+.integ-card {
+  border-bottom: 1px solid var(--line);
+  padding: 12px 14px;
+}
+.integ-card h4 {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.integ-card .state {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+}
+.integ-card .state.s-ok { color: var(--ok); border-color: rgba(95,207,128,0.4); }
+.integ-card .state.s-empty { color: var(--warn); border-color: rgba(255,180,84,0.4); }
+.integ-card .state.s-error { color: var(--danger); border-color: rgba(255,107,107,0.4); }
+.integ-card .state.s-never { color: var(--warn); }
+.integ-card .state.s-off { color: var(--muted); }
+
+.kv { display: grid; grid-template-columns: 130px 1fr; gap: 2px 10px; font-size: 12px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; word-break: break-word; }
+
+.integ-msg {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1.4;
+  background: var(--panel-2);
+  border-left: 3px solid var(--line);
+}
+.integ-msg.error { border-left-color: var(--danger); color: #ffb3b3; }
+.integ-msg.warn { border-left-color: var(--warn); color: #ffdca8; }
+.integ-msg.info { border-left-color: var(--accent); }
+
+.attempts { margin-top: 9px; font-size: 11.5px; }
+.attempts table { border-collapse: collapse; width: 100%; }
+.attempts th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 2px 6px 2px 0;
+  border-bottom: 1px solid var(--line);
+}
+.attempts td { padding: 2px 6px 2px 0; color: var(--muted); font-variant-numeric: tabular-nums; }
+.attempts td.ok { color: var(--ok); }
+.attempts td.bad { color: var(--danger); }
+
 /* ---------------------------------------------------------------- layout */
 
 main {

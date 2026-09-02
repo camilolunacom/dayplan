@@ -11,6 +11,7 @@ const state = {
   plan: [],
   pending: [],
   sources: [],
+  integrations: [],
   filterText: "",
   hiddenSources: new Set(),
   dragId: null,
@@ -273,6 +274,170 @@ function render() {
   add("overdue", overdue, overdue > 0);
   add("due today", dueToday, false);
   el("day-input").value = state.day;
+  renderIntegrations();
+}
+
+/* --------------------------------------------------- integration status */
+
+const STATE_TEXT = {
+  ok: "ok",
+  empty: "no tasks",
+  error: "error",
+  never: "never synced",
+  off: "off",
+};
+
+function relativeTime(iso) {
+  if (!iso) return "never";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return iso;
+  // Clamp: the container clock and the browser clock need not agree, and a
+  // few seconds of skew should not render as "-7s ago".
+  const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.round(secs / 3600)}h ago`;
+  return `${Math.round(secs / 86400)}d ago`;
+}
+
+function renderIntegrations() {
+  const host = el("integrations");
+  host.replaceChildren();
+  for (const integ of state.integrations) {
+    const pill = document.createElement("button");
+    pill.className = `integ state-${integ.state}`;
+    pill.title = "Integration status";
+    const dot = document.createElement("span");
+    dot.className = `dot s-${integ.state}`;
+    const label = document.createElement("span");
+    label.textContent =
+      integ.state === "off" ? integ.source : `${integ.source} ${integ.open_count}`;
+    pill.append(dot, label);
+    pill.addEventListener("click", openDrawer);
+    host.appendChild(pill);
+  }
+}
+
+function kv(pairs) {
+  const dl = document.createElement("dl");
+  dl.className = "kv";
+  for (const [key, value] of pairs) {
+    if (value === null || value === undefined || value === "") continue;
+    const dt = document.createElement("dt");
+    dt.textContent = key;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    dl.append(dt, dd);
+  }
+  return dl;
+}
+
+function attemptsTable(history) {
+  if (!history || !history.length) return null;
+  const wrap = document.createElement("div");
+  wrap.className = "attempts";
+  const table = document.createElement("table");
+  const head = document.createElement("tr");
+  for (const h of ["when", "", "trigger", "got", "new", "upd", "closed"]) {
+    const th = document.createElement("th");
+    th.textContent = h;
+    head.appendChild(th);
+  }
+  table.appendChild(head);
+  for (const a of history) {
+    const tr = document.createElement("tr");
+    const cells = [
+      relativeTime(a.finished_at),
+      a.ok ? "ok" : "err",
+      a.trigger || "?",
+      a.fetched,
+      a.added,
+      a.updated,
+      a.closed,
+    ];
+    cells.forEach((value, index) => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      if (index === 1) td.className = a.ok ? "ok" : "bad";
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  }
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function integCard(integ) {
+  const card = document.createElement("div");
+  card.className = "integ-card";
+
+  const title = document.createElement("h4");
+  const dot = document.createElement("span");
+  dot.className = `dot s-${integ.state}`;
+  const name = document.createElement("span");
+  name.textContent = integ.source;
+  const badge = document.createElement("span");
+  badge.className = `state s-${integ.state}`;
+  badge.textContent = STATE_TEXT[integ.state] || integ.state;
+  title.append(dot, name, badge);
+  card.appendChild(title);
+
+  card.appendChild(
+    kv([
+      ["open tasks", integ.open_count],
+      ["returned last run", integ.last_fetched],
+      ["last attempt", integ.last_attempt_at ? relativeTime(integ.last_attempt_at) : "never"],
+      ["last success", integ.last_success_at ? relativeTime(integ.last_success_at) : "never"],
+    ])
+  );
+
+  const message = document.createElement("div");
+  if (integ.state === "off") {
+    message.className = "integ-msg info";
+    message.textContent = integ.detail || "Not configured.";
+    card.appendChild(message);
+  } else if (integ.state === "error") {
+    message.className = "integ-msg error";
+    message.textContent = integ.last_error || "The last sync failed.";
+    card.appendChild(message);
+  } else if (integ.state === "empty") {
+    message.className = "integ-msg warn";
+    message.textContent =
+      "Synced without error but the provider returned 0 tasks. The credentials are " +
+      "fine — look at the filters instead: Asana workspaces, the Jira JQL, or which " +
+      "TickTick projects are visible.";
+    card.appendChild(message);
+  } else if (integ.state === "never") {
+    message.className = "integ-msg warn";
+    message.textContent = "Configured but never synced yet. Hit Sync.";
+    card.appendChild(message);
+  }
+
+  const table = attemptsTable(integ.history);
+  if (table) card.appendChild(table);
+  return card;
+}
+
+async function openDrawer() {
+  const drawer = el("drawer");
+  const body = el("drawer-body");
+  drawer.hidden = false;
+  body.replaceChildren();
+  try {
+    const rows = await api("/api/integrations?history=8");
+    state.integrations = rows;
+    for (const integ of rows) body.appendChild(integCard(integ));
+    renderIntegrations();
+  } catch (error) {
+    const message = document.createElement("div");
+    message.className = "integ-msg error";
+    message.textContent = error.message;
+    body.appendChild(message);
+  }
+}
+
+function closeDrawer() {
+  el("drawer").hidden = true;
 }
 
 /* ------------------------------------------------------------------ data */
@@ -285,6 +450,7 @@ async function load() {
     state.plan = data.plan;
     state.pending = data.pending;
     state.sources = data.sources;
+    state.integrations = data.integrations || [];
     render();
   } catch (error) {
     toast(`Could not load: ${error.message}`, true);
@@ -425,6 +591,7 @@ el("sync").addEventListener("click", async (event) => {
   }
 });
 
+el("drawer-close").addEventListener("click", closeDrawer);
 el("prev-day").addEventListener("click", () => { state.day = shiftDay(state.day, -1); load(); });
 el("next-day").addEventListener("click", () => { state.day = shiftDay(state.day, 1); load(); });
 el("go-today").addEventListener("click", () => { state.day = state.today; load(); });
@@ -443,6 +610,8 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "/") { event.preventDefault(); el("search").focus(); }
   if (event.key === "s") el("sync").click();
   if (event.key === "t") el("go-today").click();
+  if (event.key === "i") openDrawer();
+  if (event.key === "Escape") closeDrawer();
 });
 
 load();

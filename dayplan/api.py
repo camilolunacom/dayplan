@@ -46,7 +46,7 @@ async def _periodic_sync(minutes: int) -> None:
     """Keep the cache warm when dayplan runs as a service."""
     while True:
         try:
-            report = await asyncio.to_thread(store.sync, load_config())
+            report = await asyncio.to_thread(store.sync, load_config(), None, "scheduled")
             if report.errors:
                 log.warning("scheduled sync had errors: %s", report.errors)
             else:
@@ -104,7 +104,23 @@ def create_app() -> FastAPI:
             "pending": store.list_tasks(conn, unplanned=True),
             "summary": store.summary(conn, target),
             "sources": cfg.enabled_sources(),
+            "integrations": store.integrations(conn, cfg, history=3),
         }
+
+    @app.get("/api/integrations")
+    def integrations(
+        history: int = Query(5, ge=0, le=50),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> list[dict[str, Any]]:
+        return store.integrations(conn, load_config(), history=history)
+
+    @app.get("/api/sync-log")
+    def sync_log(
+        limit: int = Query(30, ge=1, le=200),
+        source: str | None = Query(None),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> list[dict[str, Any]]:
+        return store.sync_log(conn, limit=limit, source=source)
 
     @app.get("/api/tasks")
     def tasks(
@@ -134,7 +150,7 @@ def create_app() -> FastAPI:
     @app.post("/api/sync")
     def sync(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
         sources = payload.get("sources") or None
-        report = store.sync(load_config(), sources)
+        report = store.sync(load_config(), sources, trigger="manual")
         return report.as_dict()
 
     @app.put("/api/plan/{day}/order")

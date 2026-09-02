@@ -35,7 +35,7 @@ local run) and fill it in.
 | --- | --- |
 | `TICKTICK_TOKEN` | TickTick Open API access token |
 | `ASANA_TOKEN` | Asana Personal Access Token, https://app.asana.com/0/my-apps |
-| `ASANA_WORKSPACES` | optional, comma-separated workspace gids to limit to |
+| `ASANA_WORKSPACES` | optional, comma-separated workspace gids to limit to — **leave unset** unless you mean it, see below |
 | `JIRA_BASE_URL` | site URL, or the gateway for a scoped token — see below |
 | `JIRA_SITE_URL` | optional, only for issue links when using the gateway |
 | `JIRA_EMAIL` | the account the token belongs to |
@@ -45,6 +45,15 @@ local run) and fill it in.
 | `DAYPLAN_SYNC_INTERVAL_MINUTES` | `>0` makes the server sync on a timer |
 
 `dayplan doctor` prints what is configured and what is missing.
+
+### Do not narrow ASANA_WORKSPACES by accident
+
+Leaving `ASANA_WORKSPACES` unset scans every workspace the token can see,
+which is almost always what you want. Camilo's tasks live in
+`client-a.example` and `client-b.example`, **not** in `your-org.example` — pinning
+it to the mindk gid yields zero tasks and no error. Note that the Asana MCP
+connector only ever sees `your-org.example`, so it is a misleading source for this
+value; a personal access token sees all three.
 
 ### Getting the TickTick token
 
@@ -251,6 +260,39 @@ Two columns. **Pending** on the left is everything not yet placed on a day,
 sorted overdue first, then by due date, then priority. **Plan** on the right is
 one day, in your order.
 
+### Integration status
+
+Every sync attempt is recorded per source in a `sync_log` table, and the header
+carries one pill per integration with a status dot. Click any pill (or press
+`i`) for a panel with the last attempt, the last success, how many tasks the
+provider returned, the error text, and the recent attempt history.
+
+Four states, because the interesting one is easy to miss:
+
+| State | Means |
+| --- | --- |
+| `ok` | synced, and the provider returned tasks |
+| `no tasks` | **synced without error but returned 0 tasks** |
+| `error` | the last attempt failed; the panel shows why |
+| `off` | not configured, and which variable is missing |
+
+`no tasks` exists because it is the failure mode that looks like success. Both
+Asana and Jira answer HTTP 200 with an empty list when a filter excludes
+everything, so a wrong `ASANA_WORKSPACES` or JQL is indistinguishable from "you
+have no work" unless something says so out loud. When you see it, check the
+filters, not the token.
+
+From the terminal:
+
+```bash
+dayplan status          # one line per integration, with the error text
+dayplan status --json
+dayplan log -n 20       # recent sync attempts, newest first
+dayplan log -s asana
+```
+
+### The next task
+
 The first task in the plan that is not yet done is highlighted as **next** —
 the one to work on right now. It carries a `NEXT` badge and is named in the
 panel header. Nothing sets it by hand: it is derived from your ordering, so it
@@ -310,6 +352,8 @@ partial reorder never silently drops work.
 | `GET` | `/api/state?day=YYYY-MM-DD` | everything the UI needs in one call, including `next` |
 | `GET` | `/api/tasks?source=&day=&unplanned=&q=` | filtered task list |
 | `GET` | `/api/summary?day=` | workload snapshot, including `next` |
+| `GET` | `/api/integrations?history=` | per-source health, state and last error |
+| `GET` | `/api/sync-log?limit=&source=` | raw recent sync attempts |
 | `POST` | `/api/sync` | pull now, body `{"sources": ["jira"]}` optional |
 | `PUT` | `/api/plan/{day}/order` | body `{"ids": [...]}`, sets the order |
 | `POST` | `/api/plan/{day}/tasks` | body `{"task_id": "...", "position": 0}` |

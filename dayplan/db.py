@@ -41,6 +41,24 @@ CREATE TABLE IF NOT EXISTS plan (
 
 CREATE INDEX IF NOT EXISTS idx_plan_day ON plan(day, position);
 
+-- One row per source per sync attempt, so the dashboard can show what each
+-- integration is actually doing instead of just how many tasks it has.
+CREATE TABLE IF NOT EXISTS sync_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    source       TEXT NOT NULL,
+    started_at   TEXT NOT NULL,
+    finished_at  TEXT NOT NULL,
+    ok           INTEGER NOT NULL,
+    fetched      INTEGER NOT NULL DEFAULT 0,   -- tasks the provider returned
+    added        INTEGER NOT NULL DEFAULT 0,
+    updated      INTEGER NOT NULL DEFAULT 0,
+    closed       INTEGER NOT NULL DEFAULT 0,
+    error        TEXT,
+    trigger      TEXT                          -- 'manual' | 'scheduled' | 'cli'
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_log_source ON sync_log(source, finished_at DESC);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
