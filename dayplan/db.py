@@ -143,7 +143,13 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
 
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=15.0)
+    # check_same_thread=False because FastAPI runs a generator dependency and
+    # the endpoint body on separate threadpool threads, so a connection opened
+    # in one is used in the other and sqlite3 refuses by default. Safe here:
+    # every request opens its own connection and nothing shares one, and the
+    # CLI is single-threaded. Without this the API 500s intermittently --
+    # sequential calls happen to reuse a thread, parallel ones do not.
+    conn = sqlite3.connect(db_path, timeout=15.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
