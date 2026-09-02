@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dayplan</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">dayplan</div>
+
+  <div class="daynav">
+    <button id="prev-day" title="Previous day">&lsaquo;</button>
+    <input type="date" id="day-input">
+    <button id="next-day" title="Next day">&rsaquo;</button>
+    <button id="go-today" class="ghost">Today</button>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="stats" id="stats"></div>
+  <button id="sync" class="primary">Sync</button>
+</header>
+
+<main>
+  <section class="panel" id="panel-pending">
+    <div class="panel-head">
+      <h2>Pending <span class="count" id="pending-count">0</span></h2>
+      <div class="filters">
+        <input type="search" id="search" placeholder="filter…" autocomplete="off">
+        <div class="chips" id="source-chips"></div>
+      </div>
+    </div>
+    <div class="list" id="pending-list" data-list="pending"></div>
+  </section>
+
+  <section class="panel" id="panel-plan">
+    <div class="panel-head">
+      <h2>Plan <span class="count" id="plan-count">0</span></h2>
+      <div class="planmeta" id="plan-meta"></div>
+    </div>
+    <div class="list" id="plan-list" data-list="plan"></div>
+    <div class="hint">Drag tasks in here, in the order you want to do them.</div>
+  </section>
+</main>
+
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

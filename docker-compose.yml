@@ -1,0 +1,21 @@
+services:
+  dayplan:
+    build: .
+    image: dayplan:0.1.0
+    container_name: dayplan
+    restart: unless-stopped
+    ports:
+      # Bound to all interfaces so you can reach it from the LAN.
+      # dayplan has no authentication, so keep this off the public internet.
+      - "8787:8787"
+    env_file:
+      - .env
+    environment:
+      # Pull from every configured source every 15 minutes.
+      DAYPLAN_SYNC_INTERVAL_MINUTES: "15"
+      TZ: "America/Bogota"
+    volumes:
+      - dayplan-data:/data
+
+volumes:
+  dayplan-data:
