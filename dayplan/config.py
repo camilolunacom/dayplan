@@ -34,6 +34,17 @@ def _load_env_file(path: Path) -> None:
         os.environ.setdefault(key, value)
 
 
+def _csv_env(name: str) -> tuple[str, ...]:
+    return tuple(v.strip() for v in os.environ.get(name, "").split(",") if v.strip())
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in ("0", "false", "no", "off")
+
+
 def _int_env(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, "") or default)
@@ -54,6 +65,12 @@ class Config:
     ticktick_token_source: str
     asana_token: str | None
     asana_workspaces: tuple[str, ...]
+    asana_projects: tuple[str, ...]
+    asana_sections: tuple[str, ...]
+    asana_only_mine: bool
+    asana_include_subtasks: bool
+    ticktick_due_within_days: int | None
+    ticktick_include_undated: bool
     jira_base_url: str | None
     jira_site_url: str | None
     jira_email: str | None
@@ -84,9 +101,15 @@ def load_config() -> Config:
     )
     source = "TICKTICK_TOKEN" if ticktick_token else "TICKTICK_TOKEN not set"
 
-    workspaces = tuple(
-        w.strip() for w in os.environ.get("ASANA_WORKSPACES", "").split(",") if w.strip()
-    )
+    workspaces = _csv_env("ASANA_WORKSPACES")
+    projects = _csv_env("ASANA_PROJECTS")
+    sections = _csv_env("ASANA_SECTIONS")
+
+    within = os.environ.get("TICKTICK_DUE_WITHIN_DAYS", "").strip()
+    try:
+        due_within = int(within) if within else None
+    except ValueError:
+        due_within = None
 
     base_url = os.environ.get("JIRA_BASE_URL") or None
     if base_url:
@@ -109,6 +132,12 @@ def load_config() -> Config:
         ticktick_token_source=source,
         asana_token=os.environ.get("ASANA_TOKEN") or None,
         asana_workspaces=workspaces,
+        asana_projects=projects,
+        asana_sections=sections,
+        asana_only_mine=_bool_env("ASANA_ONLY_MINE", True),
+        asana_include_subtasks=_bool_env("ASANA_INCLUDE_SUBTASKS", True),
+        ticktick_due_within_days=due_within,
+        ticktick_include_undated=_bool_env("TICKTICK_INCLUDE_UNDATED", True),
         jira_base_url=base_url,
         jira_site_url=site_url,
         jira_email=os.environ.get("JIRA_EMAIL") or None,

@@ -46,6 +46,35 @@ local run) and fill it in.
 
 `dayplan doctor` prints what is configured and what is missing.
 
+### Narrowing what each source contributes
+
+By default every source hands over everything open and assigned to you, which
+gets noisy fast. Three knobs trim it:
+
+**TickTick — drop future clutter.** `TICKTICK_DUE_WITHIN_DAYS=0` keeps only
+what is due today or already overdue; `7` would keep the week. Recurring bills
+and appointments months out stop crowding the list. Undated tasks are kept
+(`TICKTICK_INCLUDE_UNDATED`, default true) on the grounds that an undated task
+is not future clutter.
+
+**Asana — one project, some columns.** `ASANA_PROJECTS=<gid>` narrows Asana to
+those projects and ignores `ASANA_WORKSPACES` entirely. `ASANA_SECTIONS` then
+keeps only the named board columns, so a project whose later columns are
+archives (`Work Completed`, `Finalized`, `Decided Not to Pursue`) contributes
+only live work. The project gid is the long number in the board URL:
+`app.asana.com/1/<workspace>/project/<PROJECT_GID>/board/<view>`.
+
+**Asana — subtasks.** `ASANA_INCLUDE_SUBTASKS` (default true) pulls the open
+subtasks of every matching task. Subtasks are not project members, so they
+never show up in a project listing and no section filter applies to them —
+they are included because their parent matched. A subtask assigned to someone
+else is skipped; an unassigned one under your task is kept. Each subtask
+carries its parent in the project badge (`Project › Parent task`), because
+without that a subtask like "See if we can export user names" reads as an
+orphan.
+
+`dayplan doctor` prints the active filters for each source.
+
 ### Do not narrow ASANA_WORKSPACES by accident
 
 Leaving `ASANA_WORKSPACES` unset scans every workspace the token can see,

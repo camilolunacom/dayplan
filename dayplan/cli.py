@@ -112,9 +112,23 @@ def doctor() -> None:
     cfg = load_config()
     typer.echo(f"database        {cfg.db_path}")
     typer.echo(f"ticktick        {'ok' if cfg.ticktick_token else 'MISSING'}  ({cfg.ticktick_token_source})")
+    window = (
+        "all"
+        if cfg.ticktick_due_within_days is None
+        else f"due within {cfg.ticktick_due_within_days}d"
+        + (" + undated" if cfg.ticktick_include_undated else ", undated excluded")
+    )
+    typer.echo(f"  filter        {window}")
     typer.echo(f"asana           {'ok' if cfg.asana_token else 'MISSING'}  (ASANA_TOKEN)")
-    workspaces = ", ".join(cfg.asana_workspaces) or "all visible"
-    typer.echo(f"  workspaces    {workspaces}")
+    if cfg.asana_projects:
+        typer.echo(f"  projects      {', '.join(cfg.asana_projects)} (workspaces ignored)")
+        typer.echo(f"  sections      {', '.join(cfg.asana_sections) or 'all'}")
+    else:
+        typer.echo(f"  workspaces    {', '.join(cfg.asana_workspaces) or 'all visible'}")
+    typer.echo(
+        f"  filter        {'assigned to me' if cfg.asana_only_mine else 'anyone'}"
+        f"{', + subtasks' if cfg.asana_include_subtasks else ', no subtasks'}"
+    )
     typer.echo(f"jira            {'ok' if cfg.jira_ready else 'MISSING'}  ({cfg.jira_base_url or 'JIRA_BASE_URL unset'})")
     scoped = bool(cfg.jira_base_url and "api.atlassian.com" in cfg.jira_base_url)
     typer.echo(f"  token type    {'scoped (needs read:jira-work + read:jira-user)' if scoped else 'unscoped / site URL'}")

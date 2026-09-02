@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 
 from ..config import Config
-from ..dates import iso_to_local_day
+from ..dates import days_from_today, iso_to_local_day
 from .base import ProviderError, RemoteTask
 
 API = "https://api.ticktick.com/open/v1"
@@ -75,6 +75,23 @@ def _to_task(payload: dict[str, Any], project_name: str | None) -> RemoteTask:
     )
 
 
+def _within_due_window(task: RemoteTask, cfg: Config) -> bool:
+    """Keep only what is due soon enough to matter today.
+
+    TICKTICK_DUE_WITHIN_DAYS=0 keeps today and anything overdue; 7 would keep
+    the week. Undated tasks are kept by default: an undated task is not the
+    future clutter this filter exists to remove.
+    """
+    if cfg.ticktick_due_within_days is None:
+        return True
+    if task.due is None:
+        return cfg.ticktick_include_undated
+    days = days_from_today(task.due)
+    if days is None:
+        return cfg.ticktick_include_undated
+    return days <= cfg.ticktick_due_within_days
+
+
 def fetch(cfg: Config) -> list[RemoteTask]:
     if not cfg.ticktick_token:
         raise ProviderError(
@@ -105,5 +122,7 @@ def fetch(cfg: Config) -> list[RemoteTask]:
             for item in data.get("tasks") or []:
                 if item.get("status", 0) != 0:
                     continue  # completed / abandoned
-                tasks.append(_to_task(item, project_name))
+                task = _to_task(item, project_name)
+                if _within_due_window(task, cfg):
+                    tasks.append(task)
     return tasks
