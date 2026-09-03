@@ -321,13 +321,19 @@ its own column precisely so a sync cannot disturb an arrangement you already
 made. Drag one across (or hit `→`) to keep it; drag one back to untriage it,
 which drops its place in the order.
 
-- **Drag by the number on the left** — that grip is the drag handle. It is the
-  only element with `touch-action: none`, so the rest of the card stays
-  scrollable on a touch screen. Reordering uses Pointer Events rather than
-  HTML5 drag-and-drop, which never fires on touch in any mobile browser.
+- **Drag by the handle on the left** — the ⠿ strip, a real button spanning the
+  full card height at no less than 44x40px. It is the only element with
+  `touch-action: none`, so the rest of the card stays scrollable; anything
+  smaller and a near miss lands on the card and pans the page instead. While a
+  drag is in flight `body.dragging` blocks panning entirely, in case a finger
+  slips off the handle. Reordering uses Pointer Events rather than HTML5
+  drag-and-drop, which never fires on touch in any mobile browser.
 - Drag to the top to change the current task; drag across to the other column
-  to keep or untriage. The list auto-scrolls when you hold near its edge,
-  since the finger holding a card cannot also scroll.
+  to keep or untriage. Holding near the top or bottom of the screen
+  auto-scrolls, since the finger holding a card cannot also scroll. That
+  scrolling is scripted, which is why it still works while touch panning is
+  locked — and it measures the edges of whichever element actually scrolls,
+  not of the list, whose own edges are off screen when the layout is stacked.
 - Keys: `/` focus filter, `s` sync, `i` integration status, `Esc` close.
 
 Theming is [Flexoki](https://stephango.com/flexoki) and follows

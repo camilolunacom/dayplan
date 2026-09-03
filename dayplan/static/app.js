@@ -158,17 +158,23 @@ function buildCard(task, rank, isFeatured = false) {
     card.appendChild(eyebrow);
   }
 
-  // The grip is the only thing that starts a drag. On a touch screen the rest
-  // of the card has to stay scrollable, so `touch-action: none` lives here and
-  // nowhere else.
-  const idx = document.createElement("div");
-  idx.className = "idx grip";
-  idx.title = rank ? "Drag to reorder" : "Drag into the list to keep";
-  // New-pile cards have no rank, and an empty grip is an invisible drag
-  // handle: on a touch screen there would be nothing to aim at.
-  if (!rank) idx.classList.add("nohandle");
-  idx.textContent = rank ? String(rank) : "⠿";
-  card.appendChild(idx);
+  // The handle is the only thing that starts a drag, so it has to be a real
+  // control: full card height and a finger-sized target. Anywhere else on the
+  // card stays scrollable, which is why `touch-action: none` lives here only.
+  const handle = document.createElement("button");
+  handle.type = "button";
+  handle.className = "idx grip";
+  handle.setAttribute("aria-label", rank ? `Reorder, position ${rank}` : "Move into the list");
+  handle.title = rank ? "Drag to reorder" : "Drag into the list to keep";
+  // Clicks are meaningless on a drag handle and would submit nothing; stop
+  // them so a stray tap does not look like it did something.
+  handle.addEventListener("click", (event) => event.preventDefault());
+
+  const dots = document.createElement("span");
+  dots.className = "gripdots";
+  dots.textContent = "⠿";
+  handle.appendChild(dots);
+  card.appendChild(handle);
 
   const title = titleNode(task, isFeatured ? "h1" : "div");
   title.className = "title";
@@ -381,16 +387,25 @@ function cardAfterPoint(container, y) {
 }
 
 /* Dragging to a position off screen is otherwise impossible on a tablet: the
-   finger holding the card cannot also scroll the list. */
+   finger holding the card cannot also scroll. This is scripted scrolling, so
+   it keeps working while `touch-action: none` blocks browser panning. */
 function autoScroll(container, y) {
-  const box = container.getBoundingClientRect();
-  const edge = 60;
+  // Whichever element actually scrolls: the list itself on desktop, the page
+  // when the layout is stacked and the lists are content-height.
+  const scroller =
+    container.scrollHeight > container.clientHeight
+      ? container
+      : document.querySelector("main");
+
+  // Measure the edges against the *scroller's* visible box, not the
+  // container's. Stacked, a list is far taller than the screen, so its own
+  // edges sit off screen and a finger at the bottom of the viewport would
+  // never look "near an edge".
+  const box = scroller.getBoundingClientRect();
+  const edge = 72;
   let delta = 0;
-  if (y < box.top + edge) delta = -Math.ceil((box.top + edge - y) / 6);
-  else if (y > box.bottom - edge) delta = Math.ceil((y - (box.bottom - edge)) / 6);
-  const scroller = container.scrollHeight > container.clientHeight
-    ? container
-    : document.querySelector("main");
+  if (y < box.top + edge) delta = -Math.ceil((box.top + edge - y) / 5);
+  else if (y > box.bottom - edge) delta = Math.ceil((y - (box.bottom - edge)) / 5);
   if (delta) scroller.scrollTop += delta;
 }
 
@@ -406,6 +421,11 @@ function startDrag(event) {
   drag.from = card.parentElement;
   drag.moved = false;
   card.classList.add("dragging");
+  // Belt and braces for touch: `touch-action: none` on the handle stops the
+  // gesture being read as a pan, but a finger that slips off the handle
+  // mid-drag would otherwise start scrolling the page. Lock panning globally
+  // until the drag ends. Our own auto-scroll is scripted, so it still works.
+  document.body.classList.add("dragging");
   grip.setPointerCapture(event.pointerId);
   event.preventDefault();
 }
@@ -435,6 +455,7 @@ async function endDrag(event, cancelled = false) {
   const { id, card, from, moved } = drag;
   drag.id = drag.card = drag.pointerId = drag.from = null;
   card.classList.remove("dragging");
+  document.body.classList.remove("dragging");
   for (const container of CONTAINERS()) container.classList.remove("dropping");
 
   // A tap on the grip is not a reorder.
