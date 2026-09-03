@@ -1,36 +1,42 @@
-"""Map a synced task onto a Toggl project id.
+"""Map a synced task onto a Toggl project.
 
-The Toggl Track extension's generic "DOM Integration" reads `data-project-id`
-off the element it turns into a button, so if we resolve the id here the
-button lands in the right Toggl project with no API call from us.
+The Toggl Track extension's generic "DOM Integration" turns a `.toggl-root`
+element into a real timer button, so dayplan needs no Toggl API token. The
+project has to be given as a **name**, not an id. From the installed
+extension (4.11.21), both the content script and the background handler do:
 
-Resolution happens at sync time rather than in the browser: the rules need
-the Jira epic and the Asana project, and doing it once per sync keeps the
-frontend free of provider knowledge. Change the rules and re-sync.
+    case "resolve-project": {
+      const { projectName: n, selectedWorkspaceId: r } = e.payload
+      const d = Object.values(projects).filter(u => u.name === n)
+      return d.find(u => u.workspace_id === r) ?? d[0]
+    }
 
-**Send the project NAME.** Every integration the extension ships passes
-`projectName` and none passes `projectId`, so the core resolves projects by
-name; a numeric id alone silently produces a timer with no project. We send
-both when both are known, since the name is what works and the id costs
-nothing.
+The payload carries only `projectName`. `data-project-id` is read by
+dom-integration.js and handed to createTimerLink, where nothing consumes it —
+a dead parameter. Verified live: id alone produced project_id null; adding
+the name produced the right project.
 
-Rules live in <config dir>/toggl-projects.json. `toggl_project` is the name
-as it appears in Toggl; `toggl_project_id` is optional:
+Matching is exact string equality, and among identically named projects it
+returns the first. That is a real hazard here: 283 active projects in this
+account are called "Development - Website", one per client. So a rule only
+gets a `toggl_project` when that name identifies exactly one project.
+Otherwise leave it out — the timer runs with no project, which beats running
+against an arbitrary client's project.
+
+`toggl_project_id` is optional and carried through for reference only; it
+does not affect what Toggl does.
+
+Rules live in <config dir>/toggl-projects.json:
 
     {
-      "asana": [
-        {"project_contains": "Open Path",
-         "toggl_project": "Open Path", "toggl_project_id": 197054431}
-      ],
       "jira": [
-        {"parent": "ALHM-7", "toggl_project": "ALHM Epic 7"},
-        {"key_prefix": "TN", "toggl_project": "Support - TS"}
+        {"parent": "ALHM-7", "toggl_project": "Maintenance: Tickets"},
+        {"key_prefix": "TN", "toggl_project": "Development - Website -- Maintenance"}
       ]
     }
 
 First matching rule wins, in file order, so put the specific ones (an epic)
-above the broad ones (a project key). Anything unmatched gets no project,
-which is what Toggl treats as "no project".
+above the broad ones (a project key).
 """
 
 from __future__ import annotations
@@ -60,7 +66,8 @@ def load_rules(path: Path) -> dict[str, list[dict[str, Any]]]:
 
     rules: dict[str, list[dict[str, Any]]] = {}
     for source, entries in data.items():
-        if not isinstance(entries, list):
+        # Keys starting with _ are notes to the reader, not sources.
+        if str(source).startswith("_") or not isinstance(entries, list):
             continue
         clean = []
         for entry in entries:
@@ -68,25 +75,18 @@ def load_rules(path: Path) -> dict[str, list[dict[str, Any]]]:
                 continue
             name = entry.get("toggl_project")
             raw_id = entry.get("toggl_project_id")
-            project_id: int | None
             try:
                 project_id = int(raw_id) if raw_id is not None else None
             except (TypeError, ValueError):
-                log.warning("rule with an unusable toggl_project_id: %r", entry)
                 project_id = None
-            if not name and project_id is None:
-                log.warning("rule names no Toggl project: %r", entry)
-                continue
-            if not name:
-                log.warning(
-                    "rule %r has only an id; the extension resolves projects by name, "
-                    "so add toggl_project",
-                    entry,
-                )
             matchers = {k: v for k, v in entry.items() if k in MATCHERS}
             if not matchers:
                 log.warning("rule with no matcher, it would match everything: %r", entry)
                 continue
+            if not name:
+                # Deliberate for projects whose Toggl name is not unique: the
+                # task tracks without a project rather than against a guess.
+                log.debug("rule with no toggl_project, will track unprojected: %r", entry)
             clean.append(
                 {
                     "toggl_project": str(name) if name else None,
@@ -122,7 +122,10 @@ def _matches(rule: dict[str, Any], task: Any) -> bool:
 
 
 def resolve(task: Any, rules: dict[str, list[dict[str, Any]]]) -> tuple[str | None, int | None]:
-    """Return (project name, project id) for the first matching rule."""
+    """Return (project name, project id) for the first matching rule.
+
+    The name is what Toggl acts on; the id is informational.
+    """
     for rule in rules.get(task.source, []):
         if _matches(rule, task):
             return rule.get("toggl_project"), rule.get("toggl_project_id")

@@ -24,8 +24,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     last_synced   TEXT NOT NULL,
     closed        INTEGER NOT NULL DEFAULT 0,
     closed_at     TEXT,
-    toggl_project    TEXT,        -- resolved at sync time from the project map
-    toggl_project_id INTEGER      -- ... the name is what Toggl actually uses
+    toggl_project    TEXT,        -- the NAME; the only thing Toggl acts on
+    toggl_project_id INTEGER      -- reference only, the extension ignores it
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(source);

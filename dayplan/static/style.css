@@ -64,7 +64,11 @@ body {
   background: var(--bg);
   color: var(--tx);
   font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* 100vh on a mobile browser counts the area behind the URL bar, so the last
+     rows end up under the chrome with no way to scroll to them. dvh tracks the
+     actually-visible height; vh stays as the fallback. */
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -154,7 +158,13 @@ main {
 /* Narrower than this and two columns stop being readable: stack them, new
    below, and let the page scroll as one. */
 @media (max-width: 1100px) {
-  main { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+  main {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+    /* Clear the home indicator / browser chrome so the last card is reachable. */
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    -webkit-overflow-scrolling: touch;
+  }
   main .list { overflow: visible; }
   .panel { min-height: 0; }
 }
@@ -257,7 +267,8 @@ main {
   flex-direction: column;
   gap: 5px;
   min-height: 0;
-  padding-bottom: 6px;
+  padding-bottom: 24px;
+  overscroll-behavior: contain;
 }
 .list.dropping { outline: 1px dashed var(--accent); outline-offset: 3px; border-radius: 6px; }
 
@@ -291,7 +302,6 @@ main {
   border-left: 3px solid var(--src, var(--ui-2));
   border-radius: 6px;
   padding: 6px 10px;
-  cursor: grab;
   display: grid;
   grid-template-columns: auto 1fr auto;
   grid-template-areas: "idx title side" ". meta meta";
@@ -300,7 +310,11 @@ main {
   align-items: start;
 }
 .card:hover { background: var(--ui); }
-.card.dragging { opacity: 0.4; cursor: grabbing; }
+.card.dragging {
+  opacity: 0.55;
+  border-color: var(--accent);
+  box-shadow: 0 6px 18px -8px var(--shadow);
+}
 .card.loose { background: transparent; }
 .card.loose:hover { background: var(--bg-2); }
 
@@ -313,6 +327,24 @@ main {
   text-align: right;
   padding-top: 2px;
 }
+
+/* The grip is the only drag handle. `touch-action: none` has to be scoped to
+   it: on the whole card it would kill scrolling on a touch screen, and
+   without it anywhere the browser pans instead of letting us drag. The wide
+   padding is the finger target -- 20px of number is not one. */
+.card .grip {
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  min-width: 34px;
+  padding: 6px 8px 6px 0;
+  margin: -6px 0 -6px -4px;
+  border-radius: 4px;
+}
+.card .grip:hover { color: var(--tx-2); background: var(--ui-2); }
+.card.dragging .grip { cursor: grabbing; }
+.card.featured .grip { min-width: 38px; }
 
 .card .title { grid-area: title; word-break: break-word; }
 .card .title a { color: inherit; text-decoration: none; }

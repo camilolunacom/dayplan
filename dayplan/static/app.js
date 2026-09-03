@@ -102,15 +102,13 @@ function togglSlot(task) {
     togglNodeTaskId = task.id;
   }
   togglNode.dataset.description = task.title;
-  // The NAME is what matters: every integration the extension ships passes
-  // projectName and none passes projectId, so its core resolves projects by
-  // name and an id alone yields a timer with no project. Send both when both
-  // are known. Unmapped tasks get neither, so they track with no project
-  // rather than one guessed from the source's own naming.
+  // Only the NAME does anything. The extension's resolve-project handler takes
+  // { projectName, selectedWorkspaceId } and nothing else; data-project-id is
+  // read by its dom-integration script and then dropped, so we do not send it.
+  // A task whose Toggl project name is not unique carries no name at all: it
+  // tracks unprojected instead of against an arbitrary same-named project.
   if (task.toggl_project) togglNode.dataset.projectName = task.toggl_project;
   else delete togglNode.dataset.projectName;
-  if (task.toggl_project_id) togglNode.dataset.projectId = String(task.toggl_project_id);
-  else delete togglNode.dataset.projectId;
   const tags = [task.source, ...(task.tags || [])].filter(Boolean);
   if (tags.length) togglNode.dataset.tags = tags.join(",");
   else delete togglNode.dataset.tags;
@@ -152,7 +150,6 @@ function buildCard(task, rank, isFeatured = false) {
   if (!task.pinned) card.classList.add("loose");
   if (isFeatured) card.classList.add("featured");
   card.dataset.id = task.id;
-  card.draggable = true;
 
   if (isFeatured) {
     const eyebrow = document.createElement("div");
@@ -161,8 +158,12 @@ function buildCard(task, rank, isFeatured = false) {
     card.appendChild(eyebrow);
   }
 
+  // The grip is the only thing that starts a drag. On a touch screen the rest
+  // of the card has to stay scrollable, so `touch-action: none` lives here and
+  // nowhere else.
   const idx = document.createElement("div");
-  idx.className = "idx";
+  idx.className = "idx grip";
+  idx.title = "Drag to reorder";
   idx.textContent = String(rank);
   card.appendChild(idx);
 
@@ -342,97 +343,129 @@ async function commitOrder(draggedId) {
 }
 
 /* ---------------------------------------------------------- drag and drop */
+/* Pointer Events rather than HTML5 drag-and-drop: the native API never fires
+   on touch, so the tablet could not reorder at all. One code path now covers
+   mouse, touch and stylus. */
+
+const drag = {
+  id: null,
+  card: null,
+  pointerId: null,
+  from: null,
+  moved: false,
+  scrollTimer: null,
+};
+
+const CONTAINERS = () => [list, newList];
+
+function containerUnder(x, y) {
+  for (const container of CONTAINERS()) {
+    const box = container.getBoundingClientRect();
+    if (x >= box.left && x <= box.right && y >= box.top - 40 && y <= box.bottom + 40) {
+      return container;
+    }
+  }
+  return null;
+}
 
 function cardAfterPoint(container, y) {
-  for (const card of container.querySelectorAll(".card:not(.dragging)")) {
+  for (const card of container.querySelectorAll(".card")) {
+    if (card === drag.card) continue;
     const box = card.getBoundingClientRect();
     if (y < box.top + box.height / 2) return card;
   }
   return null;
 }
 
-function wireDropTarget(container) {
-  container.addEventListener("dragover", (event) => {
-    if (!state.dragId) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    container.classList.add("dropping");
-    const dragged = document.querySelector(`.card[data-id="${CSS.escape(state.dragId)}"]`);
-    if (!dragged) return;
-    const placeholder = container.querySelector(".empty");
-    if (placeholder) placeholder.remove();
-    const reference = cardAfterPoint(container, event.clientY);
-    if (reference) container.insertBefore(dragged, reference);
-    else container.appendChild(dragged);
-  });
-
-  container.addEventListener("dragleave", (event) => {
-    if (!container.contains(event.relatedTarget)) container.classList.remove("dropping");
-  });
-
-  container.addEventListener("drop", (event) => {
-    event.preventDefault();
-    container.classList.remove("dropping");
-    state.dropped = true;
-  });
+/* Dragging to a position off screen is otherwise impossible on a tablet: the
+   finger holding the card cannot also scroll the list. */
+function autoScroll(container, y) {
+  const box = container.getBoundingClientRect();
+  const edge = 60;
+  let delta = 0;
+  if (y < box.top + edge) delta = -Math.ceil((box.top + edge - y) / 6);
+  else if (y > box.bottom - edge) delta = Math.ceil((y - (box.bottom - edge)) / 6);
+  const scroller = container.scrollHeight > container.clientHeight
+    ? container
+    : document.querySelector("main");
+  if (delta) scroller.scrollTop += delta;
 }
 
-wireDropTarget(list);
-wireDropTarget(newList);
-
-document.addEventListener("dragstart", (event) => {
-  const card = event.target.closest?.(".card");
+function startDrag(event) {
+  const grip = event.target.closest?.(".grip");
+  if (!grip || event.button > 0) return;
+  const card = grip.closest(".card");
   if (!card) return;
-  state.dragId = card.dataset.id;
-  state.dropped = false;
+
+  drag.id = card.dataset.id;
+  drag.card = card;
+  drag.pointerId = event.pointerId;
+  drag.from = card.parentElement;
+  drag.moved = false;
   card.classList.add("dragging");
-  event.dataTransfer.effectAllowed = "move";
-  event.dataTransfer.setData("text/plain", card.dataset.id);
-});
+  grip.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
 
-document.addEventListener("dragend", async (event) => {
-  const card = event.target.closest?.(".card");
-  const draggedId = state.dragId;
-  state.dragId = null;
-  list.classList.remove("dropping");
-  newList.classList.remove("dropping");
-  if (card) card.classList.remove("dragging");
-  if (!draggedId) return;
+function moveDrag(event) {
+  if (drag.pointerId !== event.pointerId || !drag.card) return;
+  event.preventDefault();
+  drag.moved = true;
 
-  // Cancelled drag (Escape, or dropped outside a list): undo the preview.
-  if (!state.dropped) {
-    render();
+  const container = containerUnder(event.clientX, event.clientY) || drag.card.parentElement;
+  container.classList.add("dropping");
+  for (const other of CONTAINERS()) {
+    if (other !== container) other.classList.remove("dropping");
+  }
+  const placeholder = container.querySelector(".empty");
+  if (placeholder) placeholder.remove();
+
+  const reference = cardAfterPoint(container, event.clientY);
+  if (reference) container.insertBefore(drag.card, reference);
+  else container.appendChild(drag.card);
+
+  autoScroll(container, event.clientY);
+}
+
+async function endDrag(event, cancelled = false) {
+  if (drag.pointerId !== event.pointerId || !drag.card) return;
+  const { id, card, from, moved } = drag;
+  drag.id = drag.card = drag.pointerId = drag.from = null;
+  card.classList.remove("dragging");
+  for (const container of CONTAINERS()) container.classList.remove("dropping");
+
+  // A tap on the grip is not a reorder.
+  if (cancelled || !moved) {
+    if (cancelled) render();
     return;
   }
-  state.dropped = false;
 
-  const wasNew = state.fresh.some((task) => task.id === draggedId);
   const nowInNew = newList.contains(card);
+  const wasNew = from === newList;
 
   try {
     if (nowInNew) {
-      // Dragged into the new pile: untriage it. Ordering the pile is
-      // meaningless, so a new-to-new drag is a no-op.
-      if (!wasNew) {
-        await api("/api/dismiss", {
-          method: "POST",
-          body: JSON.stringify({ task_id: draggedId }),
-        });
-      } else {
-        render();
+      if (wasNew) {
+        render(); // ordering the new pile means nothing
         return;
       }
+      await api("/api/dismiss", { method: "POST", body: JSON.stringify({ task_id: id }) });
     } else {
-      // Landing in the main list pins the prefix, which also accepts a new
-      // task in one move: it comes out of the pile with a real position.
-      await commitOrder(draggedId);
+      // Landing in the list pins the prefix, which also accepts a new task in
+      // one move: it comes out of the pile with a real position.
+      await commitOrder(id);
     }
     await load();
   } catch (error) {
     toast(error.message, true);
     await load();
   }
-});
+}
+
+document.addEventListener("pointerdown", startDrag);
+document.addEventListener("pointermove", moveDrag, { passive: false });
+document.addEventListener("pointerup", (event) => endDrag(event));
+document.addEventListener("pointercancel", (event) => endDrag(event, true));
 
 /* ------------------------------------------------------- integration status */
 

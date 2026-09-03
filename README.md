@@ -321,7 +321,13 @@ its own column precisely so a sync cannot disturb an arrangement you already
 made. Drag one across (or hit `→`) to keep it; drag one back to untriage it,
 which drops its place in the order.
 
-- Drag within the list to reorder; drag to the top to change the current task.
+- **Drag by the number on the left** — that grip is the drag handle. It is the
+  only element with `touch-action: none`, so the rest of the card stays
+  scrollable on a touch screen. Reordering uses Pointer Events rather than
+  HTML5 drag-and-drop, which never fires on touch in any mobile browser.
+- Drag to the top to change the current task; drag across to the other column
+  to keep or untriage. The list auto-scrolls when you hold near its edge,
+  since the finger holding a card cannot also scroll.
 - Keys: `/` focus filter, `s` sync, `i` integration status, `Esc` close.
 
 Theming is [Flexoki](https://stephango.com/flexoki) and follows
@@ -355,11 +361,29 @@ projects:
 }
 ```
 
-**Use `toggl_project`, the project name.** Every integration the extension
-ships passes `projectName` and none passes `projectId`, so its core resolves
-projects by name — a numeric id on its own starts the timer with no project
-at all, silently. `toggl_project_id` is accepted and sent alongside, but it
-is not what does the work. `dayplan doctor` warns about id-only rules.
+**`toggl_project` is the project name, and it is the only field that works.**
+From the shipped extension (4.11.21), both the content script and the
+background handler resolve a project like this:
+
+```js
+case "resolve-project": {
+  const { projectName: n, selectedWorkspaceId: r } = e.payload
+  const d = Object.values(projects).filter(u => u.name === n)
+  return d.find(u => u.workspace_id === r) ?? d[0]
+}
+```
+
+The payload carries only `projectName`. `data-project-id` is read by
+`dom-integration.js` and handed to `createTimerLink`, where nothing consumes
+it — a dead parameter. Confirmed by experiment: the id alone produced
+`project_id: null`; adding the name produced the right project.
+
+Matching is exact, and among identically named projects it returns the
+first. So **only give a rule a `toggl_project` when that name identifies
+exactly one project.** Where it does not, leave it out and the task tracks
+without a project, which beats tracking against some other client's project.
+`toggl_project_id` is carried for reference and has no effect. `dayplan
+doctor` reports how many rules are intentionally unprojected.
 
 Matchers are `project_contains`, `title_contains`, `parent` (a Jira epic key),
 `key_prefix` and `tag`; all of those present in a rule must hold. First match

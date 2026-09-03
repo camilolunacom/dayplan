@@ -1,21 +1,38 @@
 {
-  "_comment": [
-    "toggl_project is the project NAME exactly as it appears in Toggl, and it is",
-    "the field that actually works: every integration the extension ships passes",
-    "projectName, none passes projectId, so its core resolves by name. An id on",
-    "its own produces a timer with no project. toggl_project_id is optional.",
-    "First matching rule wins in file order, so put epic rules above key_prefix",
-    "rules. Matchers: project_contains, title_contains, parent, key_prefix, tag.",
-    "Resolved at sync time, so edit this and re-sync."
+  "_why": [
+    "toggl_project is the project NAME, exactly. It is the only field the Toggl",
+    "extension acts on: its resolve-project handler takes { projectName,",
+    "selectedWorkspaceId } and nothing else, matches on u.name === n, and among",
+    "identically named projects returns the first one it finds.",
+    "",
+    "So a rule gets a name ONLY when that name identifies exactly one project.",
+    "Where it does not, leave toggl_project out: the task then tracks with no",
+    "project, which is better than tracking against some other client's project.",
+    "",
+    "toggl_project_id is carried for reference and has no effect.",
+    "First matching rule wins in file order, so epic rules go above key_prefix",
+    "rules. Resolved at sync time, so edit this and re-sync."
   ],
   "asana": [
-    { "project_contains": "Open Path", "toggl_project": "PUT THE TOGGL PROJECT NAME HERE", "toggl_project_id": 197054431 },
-    { "project_contains": "Linnworks", "toggl_project": "PUT THE TOGGL PROJECT NAME HERE", "toggl_project_id": 218695668 }
+    {
+      "_note": "283 active projects are named 'Development - Website', one per client, so the name cannot identify this one. Tracks unprojected.",
+      "project_contains": "Open Path",
+      "toggl_project_id": 197054431
+    },
+    {
+      "_note": "same collision as above",
+      "project_contains": "Linnworks",
+      "toggl_project_id": 218695668
+    }
   ],
   "jira": [
-    { "parent": "ALHM-7", "toggl_project": "PUT THE TOGGL PROJECT NAME HERE", "toggl_project_id": 209356898 },
-    { "parent": "ALHM-6", "toggl_project": "PUT THE TOGGL PROJECT NAME HERE", "toggl_project_id": 210510092 },
-    { "key_prefix": "TN", "toggl_project": "PUT THE TOGGL PROJECT NAME HERE", "toggl_project_id": 182545135 },
-    { "key_prefix": "TKT", "toggl_project": "PUT THE TOGGL PROJECT NAME HERE", "toggl_project_id": 205762591 }
+    { "parent": "ALHM-7", "toggl_project": "Maintenance: Tickets", "toggl_project_id": 209356898 },
+    { "parent": "ALHM-6", "toggl_project": "Hosting: Tickets", "toggl_project_id": 210510092 },
+    { "key_prefix": "TN", "toggl_project": "Development - Website -- Maintenance", "toggl_project_id": 182545135 },
+    {
+      "_note": "246 active projects are named 'Development - Application'. Tracks unprojected.",
+      "key_prefix": "TKT",
+      "toggl_project_id": 205762591
+    }
   ]
 }

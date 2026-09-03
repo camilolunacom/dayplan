@@ -135,10 +135,9 @@ def doctor() -> None:
         f"{'' if total else '  (no mapping: every task tracks without a project)'}"
     )
     if nameless:
-        typer.secho(
-            f"  warning       {nameless} rule(s) have only an id; Toggl resolves projects "
-            "by name, so add toggl_project or the timer gets no project",
-            fg=typer.colors.YELLOW,
+        typer.echo(
+            f"  unprojected   {nameless} rule(s) carry no toggl_project, on purpose: "
+            "their Toggl name is not unique, so those tasks track without a project"
         )
     enabled = cfg.enabled_sources()
     typer.echo(f"enabled         {', '.join(enabled) if enabled else 'none'}")
