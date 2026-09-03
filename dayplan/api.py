@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import store
@@ -25,6 +26,43 @@ from .db import connect
 
 STATIC_DIR = Path(__file__).parent / "static"
 log = logging.getLogger("dayplan")
+
+# Assets whose URL carries a version, so a deploy can never be served from a
+# stale cache. Anything not listed here is served unversioned and revalidated.
+VERSIONED_ASSETS = ("style.css", "app.js")
+
+
+def _asset_fingerprint() -> tuple[str, float]:
+    """Short content hash of the versioned assets, plus their newest mtime.
+
+    The mtime is what lets a `--reload` dev server notice an edit without
+    re-hashing on every single request.
+    """
+    digest = hashlib.sha256()
+    newest = 0.0
+    for name in VERSIONED_ASSETS:
+        path = STATIC_DIR / name
+        if not path.is_file():
+            continue
+        digest.update(path.read_bytes())
+        newest = max(newest, path.stat().st_mtime)
+    return digest.hexdigest()[:12], newest
+
+
+_index_cache: dict[str, object] = {}
+
+
+def render_index() -> str:
+    """index.html with ?v=<hash> on each versioned asset."""
+    path = STATIC_DIR / "index.html"
+    version, newest = _asset_fingerprint()
+    stamp = max(newest, path.stat().st_mtime if path.is_file() else 0.0)
+    if _index_cache.get("stamp") != stamp:
+        html = path.read_text(encoding="utf-8")
+        for name in VERSIONED_ASSETS:
+            html = html.replace(f"/static/{name}", f"/static/{name}?v={version}")
+        _index_cache.update({"stamp": stamp, "html": html})
+    return str(_index_cache["html"])
 
 
 def get_conn() -> Iterator[sqlite3.Connection]:
@@ -190,9 +228,27 @@ def create_app() -> FastAPI:
         return {"task_id": resolved, "pinned": False}
 
     if STATIC_DIR.is_dir():
+        @app.middleware("http")
+        async def asset_cache_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+            response = await call_next(request)
+            if request.url.path.startswith("/static/"):
+                # A versioned URL is safe to cache forever: the URL itself
+                # changes when the file does. Anything unversioned (the icon
+                # the ZimaOS tile points at) must revalidate instead.
+                response.headers["Cache-Control"] = (
+                    "public, max-age=31536000, immutable"
+                    if "v" in request.query_params
+                    else "no-cache"
+                )
+            return response
+
         @app.get("/")
-        def index() -> FileResponse:
-            return FileResponse(STATIC_DIR / "index.html")
+        def index() -> HTMLResponse:
+            # The document itself must always revalidate, otherwise a cached
+            # copy would keep pointing at the previous asset version.
+            return HTMLResponse(
+                render_index(), headers={"Cache-Control": "no-cache"}
+            )
 
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

@@ -445,6 +445,14 @@ reorder never silently drops work.
 | `POST` | `/api/dismiss` | body `{"task_id"}`, list → new |
 | `GET` | `/api/health` | liveness + configured sources |
 
+The web UI's CSS and JS are served at `/static/<file>?v=<content hash>`. The
+document itself is sent `Cache-Control: no-cache` so it always revalidates and
+therefore always points at the current hash, while the hashed URLs are
+`immutable` for a year. Without that a browser can keep a deploy's worth of
+stale CSS — which is exactly what happened on the tablet mid-development.
+Unversioned assets like `icon.svg`, which the ZimaOS tile links to directly,
+revalidate instead.
+
 A failing provider never takes the others down: `/api/sync` returns per-source
 counts and a per-source `errors` map, and tasks from a source that failed are
 left exactly as they were.
