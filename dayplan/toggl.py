@@ -8,15 +8,23 @@ Resolution happens at sync time rather than in the browser: the rules need
 the Jira epic and the Asana project, and doing it once per sync keeps the
 frontend free of provider knowledge. Change the rules and re-sync.
 
-Rules live in <config dir>/toggl-projects.json:
+**Send the project NAME.** Every integration the extension ships passes
+`projectName` and none passes `projectId`, so the core resolves projects by
+name; a numeric id alone silently produces a timer with no project. We send
+both when both are known, since the name is what works and the id costs
+nothing.
+
+Rules live in <config dir>/toggl-projects.json. `toggl_project` is the name
+as it appears in Toggl; `toggl_project_id` is optional:
 
     {
       "asana": [
-        {"project_contains": "Open Path", "toggl_project_id": 197054431}
+        {"project_contains": "Open Path",
+         "toggl_project": "Open Path", "toggl_project_id": 197054431}
       ],
       "jira": [
-        {"parent": "ALHM-7",  "toggl_project_id": 209356898},
-        {"key_prefix": "TN",  "toggl_project_id": 182545135}
+        {"parent": "ALHM-7", "toggl_project": "ALHM Epic 7"},
+        {"key_prefix": "TN", "toggl_project": "Support - TS"}
       ]
     }
 
@@ -58,16 +66,34 @@ def load_rules(path: Path) -> dict[str, list[dict[str, Any]]]:
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
+            name = entry.get("toggl_project")
+            raw_id = entry.get("toggl_project_id")
+            project_id: int | None
             try:
-                project_id = int(entry["toggl_project_id"])
-            except (KeyError, TypeError, ValueError):
-                log.warning("rule without a usable toggl_project_id: %r", entry)
+                project_id = int(raw_id) if raw_id is not None else None
+            except (TypeError, ValueError):
+                log.warning("rule with an unusable toggl_project_id: %r", entry)
+                project_id = None
+            if not name and project_id is None:
+                log.warning("rule names no Toggl project: %r", entry)
                 continue
+            if not name:
+                log.warning(
+                    "rule %r has only an id; the extension resolves projects by name, "
+                    "so add toggl_project",
+                    entry,
+                )
             matchers = {k: v for k, v in entry.items() if k in MATCHERS}
             if not matchers:
                 log.warning("rule with no matcher, it would match everything: %r", entry)
                 continue
-            clean.append({"toggl_project_id": project_id, **matchers})
+            clean.append(
+                {
+                    "toggl_project": str(name) if name else None,
+                    "toggl_project_id": project_id,
+                    **matchers,
+                }
+            )
         rules[str(source)] = clean
     return rules
 
@@ -95,8 +121,9 @@ def _matches(rule: dict[str, Any], task: Any) -> bool:
     return True
 
 
-def resolve(task: Any, rules: dict[str, list[dict[str, Any]]]) -> int | None:
+def resolve(task: Any, rules: dict[str, list[dict[str, Any]]]) -> tuple[str | None, int | None]:
+    """Return (project name, project id) for the first matching rule."""
     for rule in rules.get(task.source, []):
         if _matches(rule, task):
-            return int(rule["toggl_project_id"])
-    return None
+            return rule.get("toggl_project"), rule.get("toggl_project_id")
+    return None, None

@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     last_synced   TEXT NOT NULL,
     closed        INTEGER NOT NULL DEFAULT 0,
     closed_at     TEXT,
-    toggl_project_id INTEGER      -- resolved at sync time from the project map
+    toggl_project    TEXT,        -- resolved at sync time from the project map
+    toggl_project_id INTEGER      -- ... the name is what Toggl actually uses
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(source);
@@ -159,8 +160,13 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
     """ALTER TABLE ADD COLUMN is safe and cheap in SQLite; CREATE TABLE IF NOT
     EXISTS will not add a column to a table that already exists."""
     have = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
-    if "toggl_project_id" not in have:
-        conn.execute("ALTER TABLE tasks ADD COLUMN toggl_project_id INTEGER")
+    wanted = {"toggl_project_id": "INTEGER", "toggl_project": "TEXT"}
+    added = False
+    for column, kind in wanted.items():
+        if column not in have:
+            conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {kind}")
+            added = True
+    if added:
         conn.commit()
 
 

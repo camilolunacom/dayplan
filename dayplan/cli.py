@@ -128,11 +128,18 @@ def doctor() -> None:
     typer.echo(f"  jql           {cfg.jira_jql}")
     rules = load_toggl_rules(cfg.toggl_project_map)
     total = sum(len(v) for v in rules.values())
+    nameless = sum(1 for v in rules.values() for r in v if not r.get("toggl_project"))
     typer.echo(f"toggl map       {cfg.toggl_project_map}")
     typer.echo(
         f"  rules         {total} across {', '.join(sorted(rules)) or 'nothing'}"
         f"{'' if total else '  (no mapping: every task tracks without a project)'}"
     )
+    if nameless:
+        typer.secho(
+            f"  warning       {nameless} rule(s) have only an id; Toggl resolves projects "
+            "by name, so add toggl_project or the timer gets no project",
+            fg=typer.colors.YELLOW,
+        )
     enabled = cfg.enabled_sources()
     typer.echo(f"enabled         {', '.join(enabled) if enabled else 'none'}")
 

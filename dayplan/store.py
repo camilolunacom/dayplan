@@ -69,14 +69,15 @@ def _upsert(conn: sqlite3.Connection, task: RemoteTask, report: SyncReport) -> N
         json.dumps(task.tags, ensure_ascii=False),
         task.notes,
         json.dumps(task.raw, ensure_ascii=False, default=str),
+        task.toggl_project,
         task.toggl_project_id,
         now,
     )
     if existing is None:
         conn.execute(
             "INSERT INTO tasks(id, ref, source, external_id, title, url, project, status, "
-            "priority, due, tags, notes, raw, toggl_project_id, first_seen, last_synced, "
-            "closed) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            "priority, due, tags, notes, raw, toggl_project, toggl_project_id, first_seen, "
+            "last_synced, closed) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
             (task.id, _next_ref(conn), task.source, task.external_id, *payload[:-1], now, now),
         )
         report.added[task.source] = report.added.get(task.source, 0) + 1
@@ -84,7 +85,8 @@ def _upsert(conn: sqlite3.Connection, task: RemoteTask, report: SyncReport) -> N
 
     conn.execute(
         "UPDATE tasks SET title = ?, url = ?, project = ?, status = ?, priority = ?, due = ?, "
-        "tags = ?, notes = ?, raw = ?, toggl_project_id = ?, last_synced = ?, closed = 0, "
+        "tags = ?, notes = ?, raw = ?, toggl_project = ?, toggl_project_id = ?, "
+        "last_synced = ?, closed = 0, "
         "closed_at = NULL WHERE id = ?",
         (*payload, task.id),
     )
@@ -141,7 +143,7 @@ def sync(
     rules = load_toggl_rules(cfg.toggl_project_map)
     for tasks in fetched.values():
         for task in tasks:
-            task.toggl_project_id = resolve_toggl(task, rules)
+            task.toggl_project, task.toggl_project_id = resolve_toggl(task, rules)
 
     conn = connect(cfg.db_path)
     try:
@@ -188,7 +190,8 @@ def sync(
 
 TASK_SELECT = """
 SELECT t.id, t.ref, t.source, t.external_id, t.title, t.url, t.project, t.status,
-       t.priority, t.due, t.tags, t.notes, t.toggl_project_id, t.closed, t.closed_at, t.first_seen,
+       t.priority, t.due, t.tags, t.notes, t.toggl_project, t.toggl_project_id,
+       t.closed, t.closed_at, t.first_seen,
        p.task_id AS plan_row, p.position AS plan_position
 FROM tasks t
 LEFT JOIN plan p ON p.task_id = t.id
@@ -212,6 +215,7 @@ def _row_to_task(row: sqlite3.Row) -> dict[str, Any]:
         "overdue": bool(due and (days_from_today(due) or 0) < 0),
         "tags": json.loads(row["tags"] or "[]"),
         "notes": row["notes"],
+        "toggl_project": row["toggl_project"],
         "toggl_project_id": row["toggl_project_id"],
         "closed": bool(row["closed"]),
         "closed_at": row["closed_at"],

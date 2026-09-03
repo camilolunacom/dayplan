@@ -344,16 +344,22 @@ host under **Custom Domain permissions** and pick **DOM Integration**, then
 grant the permission.
 
 Only the featured card gets a button, because that is the task you are
-tracking. `deploy/toggl-projects.example.json` maps tasks onto Toggl project
-ids:
+tracking. `deploy/toggl-projects.example.json` maps tasks onto Toggl
+projects:
 
 ```json
 {
-  "asana": [{ "project_contains": "Open Path", "toggl_project_id": 197054431 }],
-  "jira":  [{ "parent": "ALHM-7", "toggl_project_id": 209356898 },
-            { "key_prefix": "TN", "toggl_project_id": 182545135 }]
+  "asana": [{ "project_contains": "Open Path", "toggl_project": "Open Path" }],
+  "jira":  [{ "parent": "ALHM-7", "toggl_project": "ALHM Epic 7" },
+            { "key_prefix": "TN", "toggl_project": "Support" }]
 }
 ```
+
+**Use `toggl_project`, the project name.** Every integration the extension
+ships passes `projectName` and none passes `projectId`, so its core resolves
+projects by name — a numeric id on its own starts the timer with no project
+at all, silently. `toggl_project_id` is accepted and sent alongside, but it
+is not what does the work. `dayplan doctor` warns about id-only rules.
 
 Matchers are `project_contains`, `title_contains`, `parent` (a Jira epic key),
 `key_prefix` and `tag`; all of those present in a rule must hold. First match

@@ -102,9 +102,13 @@ function togglSlot(task) {
     togglNodeTaskId = task.id;
   }
   togglNode.dataset.description = task.title;
-  // The numeric Toggl project id, resolved during sync from the project map.
-  // Deliberately no data-project-name: an unmapped task should land in Toggl
-  // with no project rather than inventing one from the source's own naming.
+  // The NAME is what matters: every integration the extension ships passes
+  // projectName and none passes projectId, so its core resolves projects by
+  // name and an id alone yields a timer with no project. Send both when both
+  // are known. Unmapped tasks get neither, so they track with no project
+  // rather than one guessed from the source's own naming.
+  if (task.toggl_project) togglNode.dataset.projectName = task.toggl_project;
+  else delete togglNode.dataset.projectName;
   if (task.toggl_project_id) togglNode.dataset.projectId = String(task.toggl_project_id);
   else delete togglNode.dataset.projectId;
   const tags = [task.source, ...(task.tags || [])].filter(Boolean);
