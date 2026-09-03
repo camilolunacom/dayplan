@@ -163,8 +163,11 @@ function buildCard(task, rank, isFeatured = false) {
   // nowhere else.
   const idx = document.createElement("div");
   idx.className = "idx grip";
-  idx.title = "Drag to reorder";
-  idx.textContent = String(rank);
+  idx.title = rank ? "Drag to reorder" : "Drag into the list to keep";
+  // New-pile cards have no rank, and an empty grip is an invisible drag
+  // handle: on a touch screen there would be nothing to aim at.
+  if (!rank) idx.classList.add("nohandle");
+  idx.textContent = rank ? String(rank) : "⠿";
   card.appendChild(idx);
 
   const title = titleNode(task, isFeatured ? "h1" : "div");

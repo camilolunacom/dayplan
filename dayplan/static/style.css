@@ -155,20 +155,6 @@ main {
   margin: 0 auto;
 }
 
-/* Narrower than this and two columns stop being readable: stack them, new
-   below, and let the page scroll as one. */
-@media (max-width: 1100px) {
-  main {
-    grid-template-columns: minmax(0, 1fr);
-    overflow-y: auto;
-    /* Clear the home indicator / browser chrome so the last card is reachable. */
-    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
-    -webkit-overflow-scrolling: touch;
-  }
-  main .list { overflow: visible; }
-  .panel { min-height: 0; }
-}
-
 .panel {
   display: flex;
   flex-direction: column;
@@ -272,6 +258,13 @@ main {
 }
 .list.dropping { outline: 1px dashed var(--accent); outline-offset: 3px; border-radius: 6px; }
 
+/* The list is a flex column, so its children default to flex-shrink: 1. Once
+   the list is height-constrained the cards shrink below their own content,
+   which does not clip -- it overlaps. That is what put the hints, the
+   "unordered" divider and the next heading on top of the cards, and cards on
+   top of each other. Nothing in this list should ever shrink. */
+.list > * { flex: 0 0 auto; }
+
 .divider {
   display: flex;
   align-items: center;
@@ -345,6 +338,8 @@ main {
 .card .grip:hover { color: var(--tx-2); background: var(--ui-2); }
 .card.dragging .grip { cursor: grabbing; }
 .card.featured .grip { min-width: 38px; }
+.card .grip.nohandle { color: var(--tx-3); opacity: 0.6; font-size: 13px; }
+.card .grip.nohandle:hover { opacity: 1; }
 
 .card .title { grid-area: title; word-break: break-word; }
 .card .title a { color: inherit; text-decoration: none; }
@@ -489,6 +484,40 @@ main {
 }
 .toast.show { transform: translateX(-50%) translateY(0); }
 .toast.err { border-color: var(--red); color: var(--red); }
+
+/* Narrower than this and two columns stop being readable: stack them, new
+   below, and let the page scroll as one. */
+@media (max-width: 1100px) {
+  main {
+    grid-template-columns: minmax(0, 1fr);
+    /* Both of these matter. Without them the grid has a definite height and
+       stretches its two rows to an equal share (444px each here), while the
+       lists inside are content-height with overflow visible -- so a long list
+       spills 200px over the panel below it and paints on top of its heading
+       and cards. Content-sized rows anchored to the start let the whole page
+       scroll instead. */
+    grid-auto-rows: min-content;
+    align-content: start;
+    overflow-y: auto;
+    /* Clear the home indicator / browser chrome so the last card is reachable. */
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* The panel has to become a plain block here. Left as a flex column its
+     .list keeps a short flex-sized box while `overflow: visible` lets the
+     cards spill out of it, so the hint below and the next panel's heading get
+     painted on top of them. As a block, every child takes its natural height
+     and simply flows. */
+  .panel { display: block; min-height: 0; }
+  main .list {
+    overflow: visible;
+    flex: none;
+    height: auto;
+    padding-bottom: 8px;
+  }
+  .hint { padding-bottom: 20px; }
+}
 
 @media (max-width: 700px) {
   .featured { grid-template-columns: 1fr; }
