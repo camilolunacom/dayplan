@@ -297,6 +297,19 @@ uv run dayplan sync
 uv run dayplan serve          # http://127.0.0.1:8787
 ```
 
+### Tests
+
+The web UI has tests; they need no dependency beyond Node, which is already
+here for the TickTick CLI.
+
+```bash
+node --test tests/*.test.mjs
+```
+
+`tests/harness.mjs` runs `static/app.js` in a `vm` context against a stub DOM,
+a stub `fetch` and a fake clock, which is what lets a test step 60 seconds and
+watch what the page asks the server for. No jsdom, no bundler, no framework.
+
 ## Web UI
 
 Two columns side by side on a wide screen, stacked on anything narrower than
@@ -335,6 +348,14 @@ which drops its place in the order.
   locked — and it measures the edges of whichever element actually scrolls,
   not of the list, whose own edges are off screen when the layout is stacked.
 - Keys: `/` focus filter, `s` sync, `i` integration status, `Esc` close.
+- **It refreshes itself every 60 seconds**, so a tab left open picks up what
+  the 15 minute background sync did without a reload. The polling is
+  deliberately timid: it stops while the tab is hidden and catches up the
+  moment it comes back, it skips a tick while a drag is in flight, it never has
+  two `/api/state` requests open at once, and it only redraws when the tasks or
+  a visible integration status actually changed — a redraw would otherwise
+  throw away the Toggl button and the scroll position every minute. A failed
+  poll stays quiet; only a load you asked for toasts.
 
 Theming is [Flexoki](https://stephango.com/flexoki) and follows
 `prefers-color-scheme`: paper and the 600 accents in light, black and the 400
