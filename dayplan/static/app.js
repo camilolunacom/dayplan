@@ -317,19 +317,128 @@ function render() {
 }
 
 /* --------------------------------------------------------------------- data */
+/* The backend syncs on a 15 minute schedule of its own, so a tab left open all
+   day would otherwise sit on whatever it fetched at breakfast. So we poll, but
+   only where it can possibly matter: a visible tab, no drag in progress, one
+   request at a time, and no rebuild of the DOM unless something actually
+   changed. */
 
-async function load() {
+const POLL_MS = 60000;
+
+let pollTimer = null;
+let inFlight = null;
+let lastSignature = null;
+let catchUpPending = false;
+
+// Everything the UI draws out of /api/state, and nothing else. Integration
+// timestamps and attempt history move on every scheduled sync even when it
+// found nothing, and the drawer refetches those itself when it opens, so they
+// stay out: only the tasks and a visible integration status count as a change.
+function stateSignature(data) {
+  return JSON.stringify([
+    data.tasks,
+    data.new || [],
+    data.current,
+    (data.integrations || []).map((integ) => [integ.source, integ.state, integ.open_count]),
+  ]);
+}
+
+async function refresh(background) {
   try {
     const data = await api("/api/state");
+    // A drag started while the request was in the air. The list belongs to the
+    // finger until it lets go; drop the payload, the next poll brings it back.
+    if (background && drag.card) return;
+
+    const signature = stateSignature(data);
+    const changed = signature !== lastSignature;
+    lastSignature = signature;
+
     state.tasks = data.tasks;
     state.fresh = data.new || [];
     state.current = data.current;
     state.integrations = data.integrations || [];
+
+    // A poll that brings back exactly what is already on screen must not
+    // rebuild it: render() replaces every card, which throws away the Toggl
+    // button the extension built and any scroll position with it. A load asked
+    // for by hand always draws, because the action that triggered it moved
+    // cards around itself.
+    if (background && !changed) return;
     render();
   } catch (error) {
-    toast(`Could not load: ${error.message}`, true);
+    // A failed poll is not news anybody asked for, and a toast every minute
+    // while the network is down is worse than a list that stopped updating.
+    if (!background) toast(`Could not load: ${error.message}`, true);
   }
 }
+
+// One /api/state request at a time. Two in flight can finish out of order and
+// leave the older payload on screen, so a poll that lands while a load is
+// already running is dropped -- that load brings fresh state anyway -- while a
+// load an action asked for queues behind it, and so reads the state that
+// follows its own write.
+function load({ background = false } = {}) {
+  if (inFlight && background) return inFlight;
+  const run = () => {
+    // Whatever this request brings back is newer than anything a queued
+    // catch-up would have asked for, so it settles that debt too.
+    catchUpPending = false;
+    return refresh(background);
+  };
+  const chained = inFlight ? inFlight.then(run, run) : run();
+  const tracked = chained.then(() => {
+    if (inFlight === tracked) inFlight = null;
+    if (catchUpPending) catchUp();
+  });
+  inFlight = tracked;
+  return tracked;
+}
+
+// Coming back into view is not a beat of the interval, it is the one refresh
+// that shows what the scheduled syncs did while the tab was away -- so when a
+// drag or an open request is in the way it waits its turn instead of being
+// dropped. Whoever clears the way runs it: endDrag, or the request in flight.
+function catchUp() {
+  if (document.visibilityState !== "visible") {
+    // The next visibilitychange asks again; a queued refresh must not outlive
+    // the tab going away, or it would fire against a hidden tab.
+    catchUpPending = false;
+    return;
+  }
+  if (drag.card || inFlight) {
+    catchUpPending = true;
+    return;
+  }
+  catchUpPending = false;
+  load({ background: true });
+}
+
+function pollNow() {
+  if (document.visibilityState !== "visible" || drag.card) return;
+  load({ background: true });
+}
+
+function startPolling() {
+  if (pollTimer !== null || document.visibilityState !== "visible") return;
+  pollTimer = setInterval(pollNow, POLL_MS);
+}
+
+function stopPolling() {
+  clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") {
+    stopPolling();
+    return;
+  }
+  // Back on screen: show whatever the scheduled syncs did while it was away
+  // instead of sitting out the rest of the interval.
+  startPolling();
+  catchUp();
+});
 
 async function commitOrder(draggedId) {
   // Pin the prefix of the list down to whichever is lower: the card just
@@ -458,31 +567,37 @@ async function endDrag(event, cancelled = false) {
   document.body.classList.remove("dragging");
   for (const container of CONTAINERS()) container.classList.remove("dropping");
 
-  // A tap on the grip is not a reorder.
-  if (cancelled || !moved) {
-    if (cancelled) render();
-    return;
-  }
-
-  const nowInNew = newList.contains(card);
-  const wasNew = from === newList;
-
   try {
-    if (nowInNew) {
-      if (wasNew) {
-        render(); // ordering the new pile means nothing
-        return;
-      }
-      await api("/api/dismiss", { method: "POST", body: JSON.stringify({ task_id: id }) });
-    } else {
-      // Landing in the list pins the prefix, which also accepts a new task in
-      // one move: it comes out of the pile with a real position.
-      await commitOrder(id);
+    // A tap on the grip is not a reorder.
+    if (cancelled || !moved) {
+      if (cancelled) render();
+      return;
     }
-    await load();
-  } catch (error) {
-    toast(error.message, true);
-    await load();
+
+    const nowInNew = newList.contains(card);
+    const wasNew = from === newList;
+
+    try {
+      if (nowInNew) {
+        if (wasNew) {
+          render(); // ordering the new pile means nothing
+          return;
+        }
+        await api("/api/dismiss", { method: "POST", body: JSON.stringify({ task_id: id }) });
+      } else {
+        // Landing in the list pins the prefix, which also accepts a new task in
+        // one move: it comes out of the pile with a real position.
+        await commitOrder(id);
+      }
+      await load();
+    } catch (error) {
+      toast(error.message, true);
+      await load();
+    }
+  } finally {
+    // The finger is off the list, so a refresh it was holding off can run. On
+    // the paths that reloaded already this is a no-op: that load took the debt.
+    if (catchUpPending) catchUp();
   }
 }
 
@@ -668,3 +783,4 @@ document.addEventListener("keydown", (event) => {
 });
 
 load();
+startPolling();
