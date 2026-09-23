@@ -122,16 +122,11 @@ def create_app() -> FastAPI:
     @app.get("/api/state")
     def state(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
         cfg = load_config()
-        tasks = store.ordered_tasks(conn)
-        fresh = store.new_tasks(conn)
+        snapshot = store.state_snapshot(conn, cfg, history=3)
         return {
             "today": today_str(),
-            "current": store.next_task(tasks) or store.next_task(fresh),
-            "tasks": tasks,
-            "new": fresh,
-            "summary": store.summary(conn),
             "sources": cfg.enabled_sources(),
-            "integrations": store.integrations(conn, cfg, history=3),
+            **snapshot,
         }
 
     @app.get("/api/integrations")
@@ -175,15 +170,26 @@ def create_app() -> FastAPI:
         payload: dict[str, Any] = Body(...),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> dict[str, Any]:
-        """Pin the given ids to the head of the list, in this order."""
+        """Pin the given ids to the head of the list, in this order.
+
+        Requires the order revision the caller last read `/api/state` with:
+        a stale one (the order changed elsewhere since, e.g. a task
+        confirmed-reopened and dropped its old plan row) is rejected with 409
+        rather than silently overwritten.
+        """
         ids = payload.get("ids")
         if not isinstance(ids, list):
             raise HTTPException(status_code=400, detail="body needs an 'ids' array")
+        revision = payload.get("revision")
+        if not isinstance(revision, int) or isinstance(revision, bool):
+            raise HTTPException(status_code=400, detail="body needs an integer 'revision'")
         try:
-            final = store.set_order(conn, [str(i) for i in ids])
+            final = store.set_order(conn, [str(i) for i in ids], expected_revision=revision)
         except store.ResolveError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return {"ids": final}
+        except store.ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"ids": final, "revision": store.get_order_revision(conn)}
 
     @app.post("/api/accept")
     def accept(

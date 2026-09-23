@@ -192,6 +192,7 @@ export function samplePayload() {
     new: [task("c", { zone: "new", pinned: false })],
     summary: {},
     sources: ["ticktick"],
+    order_revision: 1,
     integrations: [
       {
         source: "ticktick",
@@ -213,6 +214,7 @@ export async function loadApp({ visible = true, payload = samplePayload() } = {}
   const fetches = [];
   let held = null; // queued /api/state responses, when the test holds them open
   let current = payload;
+  const overrides = []; // one-shot { method, path, status, body } responses
 
   const document = {
     visibilityState: visible ? "visible" : "hidden",
@@ -247,7 +249,20 @@ export async function loadApp({ visible = true, payload = samplePayload() } = {}
   };
 
   function fetchStub(path, options = {}) {
-    fetches.push({ path, method: options.method || "GET", options });
+    const method = options.method || "GET";
+    fetches.push({ path, method, options });
+
+    const overrideAt = overrides.findIndex((o) => o.method === method && o.path === path);
+    if (overrideAt >= 0) {
+      const { status, body } = overrides[overrideAt];
+      overrides.splice(overrideAt, 1);
+      return Promise.resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        json: () => Promise.resolve(JSON.parse(JSON.stringify(body))),
+      });
+    }
+
     if (path.startsWith("/api/state") && held) {
       return new Promise((resolve) => held.push(() => resolve(respond(bodyFor(path)))));
     }
@@ -286,6 +301,11 @@ export async function loadApp({ visible = true, payload = samplePayload() } = {}
     /** Replace what /api/state answers with from now on. */
     serve(next) { current = next; },
     payload: () => current,
+
+    /** The next matching request gets this status/body instead, once. */
+    respondOnce(method, path, status, body = {}) {
+      overrides.push({ method, path, status, body });
+    },
 
     /** Hold /api/state responses open; the returned function releases them. */
     hold() {

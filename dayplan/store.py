@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
+import os
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
+from typing import Any, Iterator
 
 from .config import Config
 from .dates import days_from_today
-from .db import connect, set_meta
+from .db import connect, get_meta, set_meta
 from .providers import SOURCES, RemoteTask, fetch_all
 from .toggl import load_rules as load_toggl_rules
 from .toggl import resolve as resolve_toggl
@@ -54,9 +58,34 @@ def _next_ref(conn: sqlite3.Connection) -> int:
     return int(row["next"])
 
 
+class ConflictError(RuntimeError):
+    """The order (or other plan state) moved under the caller between their
+    read and their write."""
+
+
+def get_order_revision(conn: sqlite3.Connection) -> int:
+    """A counter bumped on every mutation that changes plan membership/order
+    or visible list membership -- what a client compares against to detect a
+    stale write. See `_bump_order_revision`."""
+    return int(get_meta(conn, "order_revision") or "0")
+
+
+def _bump_order_revision(conn: sqlite3.Connection) -> int:
+    new = get_order_revision(conn) + 1
+    set_meta(conn, "order_revision", str(new))
+    return new
+
+
+# A departure is confirmed only after this many consecutive successful,
+# non-empty syncs from a source omit the task while returning at least one
+# other task from that source. One partial miss is noise (a provider paging
+# hiccup, a filter that briefly excluded it); two in a row is a pattern.
+ABSENCE_CONFIRM_THRESHOLD = 2
+
+
 def _upsert(conn: sqlite3.Connection, task: RemoteTask, report: SyncReport) -> None:
     existing = conn.execute(
-        "SELECT id, closed FROM tasks WHERE id = ?", (task.id,)
+        "SELECT id, closed, needs_retriage FROM tasks WHERE id = ?", (task.id,)
     ).fetchone()
     now = _now()
     payload = (
@@ -77,22 +106,36 @@ def _upsert(conn: sqlite3.Connection, task: RemoteTask, report: SyncReport) -> N
         conn.execute(
             "INSERT INTO tasks(id, ref, source, external_id, title, url, project, status, "
             "priority, due, tags, notes, raw, toggl_project, toggl_project_id, first_seen, "
-            "last_synced, closed) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            "last_synced, closed, absence_streak, needs_retriage) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)",
             (task.id, _next_ref(conn), task.source, task.external_id, *payload[:-1], now, now),
         )
         report.added[task.source] = report.added.get(task.source, 0) + 1
         return
 
+    # Being seen resets the absence streak regardless of anything else: a
+    # task that was flaking in and out of a provider's feed is not "departing"
+    # once it shows back up.
+    reopening = bool(existing["needs_retriage"])
     conn.execute(
         "UPDATE tasks SET title = ?, url = ?, project = ?, status = ?, priority = ?, due = ?, "
         "tags = ?, notes = ?, raw = ?, toggl_project = ?, toggl_project_id = ?, "
-        "last_synced = ?, closed = 0, "
-        "closed_at = NULL WHERE id = ?",
-        (*payload, task.id),
+        "last_synced = ?, closed = 0, closed_at = NULL, absence_streak = 0, "
+        "needs_retriage = 0" + (", reappeared_at = ?" if reopening else "") + " WHERE id = ?",
+        (*payload, now, task.id) if reopening else (*payload, task.id),
     )
     report.updated[task.source] = report.updated.get(task.source, 0) + 1
     if existing["closed"]:
         report.reopened[task.source] = report.reopened.get(task.source, 0) + 1
+
+    if reopening:
+        # Confirmed-departed, and now back: the old plan row (and whatever
+        # manual position it carried) belongs to the task that left. Drop it
+        # atomically with clearing the retriage flag so it lands back in the
+        # New pile, sorted as a fresh arrival by `reappeared_at`, not by its
+        # original `first_seen`.
+        conn.execute("DELETE FROM plan WHERE task_id = ?", (task.id,))
+        _bump_order_revision(conn)
 
 
 def _record_attempt(
@@ -115,6 +158,35 @@ def _record_attempt(
     )
 
 
+def _sync_lock_path(cfg: Config) -> Path:
+    return cfg.db_path.parent / f"{cfg.db_path.name}.sync.lock"
+
+
+@contextlib.contextmanager
+def _sync_lock(cfg: Config) -> Iterator[None]:
+    """Serialize the whole sync -- provider fetch through DB commit -- across
+    threads and separate processes (scheduled loop, `/api/sync`, the CLI)
+    that share this database path.
+
+    A scheduled sync, a manual API sync and a CLI sync can all be triggered
+    independently, and without this, their fetch-then-apply steps could
+    interleave: a later-started sync could confirm a departure and commit,
+    then an earlier-started one could resume with its now-stale snapshot and
+    spuriously reopen or delete plan state. `flock` on a file next to the
+    database serializes them regardless of process boundary; opening an
+    independent fd per call means the lock is released by close (or by the
+    process dying) without needing any cleanup handshake.
+    """
+    lock_path = _sync_lock_path(cfg)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def sync(
     cfg: Config, sources: list[str] | None = None, trigger: str = "manual"
 ) -> SyncReport:
@@ -126,6 +198,17 @@ def sync(
         report.errors["config"] = "No source is configured. Run `dayplan doctor`."
         return report
 
+    with _sync_lock(cfg):
+        return _sync_locked(cfg, requested, report, started, trigger)
+
+
+def _sync_locked(
+    cfg: Config,
+    requested: list[str],
+    report: SyncReport,
+    started: str,
+    trigger: str,
+) -> SyncReport:
     enabled = set(cfg.enabled_sources())
     targets = []
     for source in requested:
@@ -156,17 +239,39 @@ def sync(
                 _upsert(conn, task, report)
                 seen.add(task.id)
 
-            # Anything we had open for this source and did not see is done or gone.
-            rows = conn.execute(
-                "SELECT id FROM tasks WHERE source = ? AND closed = 0", (source,)
-            ).fetchall()
-            gone = [row["id"] for row in rows if row["id"] not in seen]
-            if gone:
-                conn.executemany(
-                    "UPDATE tasks SET closed = 1, closed_at = ? WHERE id = ?",
-                    [(_now(), task_id) for task_id in gone],
-                )
-                report.closed[source] = len(gone)
+            # A successful-but-empty response says nothing about which tasks
+            # left: it is far more likely a provider hiccup (rate limit, an
+            # empty page) than every open task vanishing at once, so it must
+            # not advance anyone's absence streak, let alone close anything.
+            if tasks:
+                rows = conn.execute(
+                    "SELECT id, absence_streak FROM tasks WHERE source = ? AND closed = 0",
+                    (source,),
+                ).fetchall()
+                absent = [row for row in rows if row["id"] not in seen]
+                newly_closed = 0
+                for row in absent:
+                    streak = row["absence_streak"] + 1
+                    if streak >= ABSENCE_CONFIRM_THRESHOLD:
+                        # Confirmed departure: close it, but keep its plan row
+                        # exactly as it is -- a transient empty/partial
+                        # response must never destroy a manual position, and
+                        # the row is what lets a later return be recognized as
+                        # *this* task's reopening rather than a fresh add.
+                        conn.execute(
+                            "UPDATE tasks SET closed = 1, closed_at = ?, needs_retriage = 1, "
+                            "absence_streak = ? WHERE id = ?",
+                            (_now(), streak, row["id"]),
+                        )
+                        newly_closed += 1
+                    else:
+                        conn.execute(
+                            "UPDATE tasks SET absence_streak = ? WHERE id = ?",
+                            (streak, row["id"]),
+                        )
+                if newly_closed:
+                    report.closed[source] = newly_closed
+                    _bump_order_revision(conn)
             set_meta(conn, f"last_sync:{source}", _now())
             _record_attempt(
                 conn,
@@ -191,7 +296,7 @@ def sync(
 TASK_SELECT = """
 SELECT t.id, t.ref, t.source, t.external_id, t.title, t.url, t.project, t.status,
        t.priority, t.due, t.tags, t.notes, t.toggl_project, t.toggl_project_id,
-       t.closed, t.closed_at, t.first_seen,
+       t.closed, t.closed_at, t.first_seen, t.reappeared_at,
        p.task_id AS plan_row, p.position AS plan_position
 FROM tasks t
 LEFT JOIN plan p ON p.task_id = t.id
@@ -220,6 +325,7 @@ def _row_to_task(row: sqlite3.Row) -> dict[str, Any]:
         "closed": bool(row["closed"]),
         "closed_at": row["closed_at"],
         "first_seen": row["first_seen"],
+        "reappeared_at": row["reappeared_at"],
         "position": row["plan_position"],
         # Three zones, all derived from the plan row:
         #   ordered    a manual position -> he arranged it
@@ -265,10 +371,20 @@ def ordered_tasks(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return result
 
 
+def _arrival_key(task: dict[str, Any]) -> str:
+    """When a task counts as having arrived in the New pile.
+
+    A task reopening after a confirmed departure gets `reappeared_at` set,
+    which must win over its original `first_seen` -- otherwise it would sort
+    by ancient history instead of showing up as the fresh arrival it is.
+    """
+    return task["reappeared_at"] or task["first_seen"] or ""
+
+
 def new_tasks(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Untriaged arrivals, newest first. Kept out of the main list entirely."""
     rows = [t for t in list_tasks(conn) if t["zone"] == "new"]
-    rows.sort(key=lambda t: (t["first_seen"] or "", t["title"].lower()), reverse=True)
+    rows.sort(key=lambda t: (_arrival_key(t), t["title"].lower()), reverse=True)
     for task in rows:
         task["pinned"] = False
     return rows
@@ -278,11 +394,13 @@ def acknowledge(conn: sqlite3.Connection, task_id: str) -> None:
     """Move a new task into the main list without giving it a rank."""
     if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
         raise ResolveError(f"unknown task id {task_id!r}")
-    conn.execute(
+    cursor = conn.execute(
         "INSERT INTO plan(task_id, position, updated_at) VALUES(?, NULL, ?) "
         "ON CONFLICT(task_id) DO NOTHING",
         (task_id, _now()),
     )
+    if cursor.rowcount:  # a no-op (already acknowledged) must not bump the revision
+        _bump_order_revision(conn)
     conn.commit()
 
 
@@ -296,6 +414,7 @@ def unacknowledge(conn: sqlite3.Connection, task_id: str) -> None:
         return
     conn.execute("DELETE FROM plan WHERE task_id = ?", (task_id,))
     _renumber(conn, _positions(conn))
+    _bump_order_revision(conn)
     conn.commit()
 
 
@@ -419,6 +538,7 @@ def assign(
 
     conn.execute(UPSERT_POSITION, (task_id, index, _now()))
     _renumber(conn, order)
+    _bump_order_revision(conn)
     conn.commit()
     return {"task_id": task_id, "position": index}
 
@@ -429,20 +549,30 @@ def unassign(conn: sqlite3.Connection, task_id: str) -> None:
     The row itself stays, so the task remains part of the list rather than
     falling back into the new pile.
     """
-    if not conn.execute("SELECT 1 FROM plan WHERE task_id = ?", (task_id,)).fetchone():
+    row = conn.execute("SELECT position FROM plan WHERE task_id = ?", (task_id,)).fetchone()
+    if row is None or row["position"] is None:  # no row, or already unranked: a no-op
         return
     conn.execute(
         "UPDATE plan SET position = NULL, updated_at = ? WHERE task_id = ?", (_now(), task_id)
     )
     _renumber(conn, _positions(conn))
+    _bump_order_revision(conn)
     conn.commit()
 
 
-def set_order(conn: sqlite3.Connection, ids: list[str]) -> list[str]:
+def set_order(
+    conn: sqlite3.Connection, ids: list[str], *, expected_revision: int | None = None
+) -> list[str]:
     """Pin these ids as the ranked head of the list, in this order.
 
     Already-ranked tasks left out of `ids` keep their relative order and
     follow after, so a partial reorder never silently drops work.
+
+    `expected_revision`, when given, is compared against the current order
+    revision inside the same write transaction that performs the update, so a
+    stale caller (a drag started against an order that has since changed --
+    for instance a task confirmed-reopened out from under it) is rejected
+    with `ConflictError` instead of silently clobbering what changed.
     """
     known: list[str] = []
     for task_id in ids:
@@ -451,13 +581,24 @@ def set_order(conn: sqlite3.Connection, ids: list[str]) -> list[str]:
         if task_id not in known:
             known.append(task_id)
 
-    leftovers = [t for t in _positions(conn) if t not in known]
-    final = known + leftovers
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if expected_revision is not None and get_order_revision(conn) != expected_revision:
+            raise ConflictError(
+                f"order revision {expected_revision} is stale; reload and try again"
+            )
 
-    now = _now()
-    conn.executemany(
-        UPSERT_POSITION, [(task_id, index, now) for index, task_id in enumerate(final)]
-    )
+        leftovers = [t for t in _positions(conn) if t not in known]
+        final = known + leftovers
+
+        now = _now()
+        conn.executemany(
+            UPSERT_POSITION, [(task_id, index, now) for index, task_id in enumerate(final)]
+        )
+        _bump_order_revision(conn)
+    except Exception:
+        conn.rollback()
+        raise
     conn.commit()
     return final
 
@@ -548,6 +689,41 @@ def integrations(conn: sqlite3.Connection, cfg: Config, history: int = 5) -> lis
             }
         )
     return result
+
+
+def state_snapshot(conn: sqlite3.Connection, cfg: Config, *, history: int = 3) -> dict[str, Any]:
+    """Every DB-derived `/api/state` field, read from one consistent point in
+    time.
+
+    Without an explicit transaction, each read here would autocommit on its
+    own, and a concurrent sync or plan mutation could land in the gap between
+    them -- pairing a stale task list with a revision that describes a state
+    the list does not reflect. That silently defeats `/api/order`'s
+    stale-write check, which trusts the revision to describe the list it came
+    with. Wrapping every read in one transaction gives WAL snapshot isolation
+    instead: whichever commits land before or after this transaction starts,
+    every read inside it sees the same single point in time.
+    """
+    conn.execute("BEGIN")
+    try:
+        tasks = ordered_tasks(conn)
+        fresh = new_tasks(conn)
+        summ = summary(conn)
+        integ = integrations(conn, cfg, history=history)
+        revision = get_order_revision(conn)
+    except Exception:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
+    return {
+        "current": next_task(tasks) or next_task(fresh),
+        "tasks": tasks,
+        "new": fresh,
+        "summary": summ,
+        "integrations": integ,
+        "order_revision": revision,
+    }
 
 
 def sync_log(conn: sqlite3.Connection, limit: int = 30, source: str | None = None) -> list[dict[str, Any]]:

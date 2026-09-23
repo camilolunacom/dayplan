@@ -471,17 +471,31 @@ reorder never silently drops work.
 
 | Method | Path | Does |
 | --- | --- | --- |
-| `GET` | `/api/state` | everything the UI needs: `tasks`, `new`, `current` |
+| `GET` | `/api/state` | everything the UI needs: `tasks`, `new`, `current`, `order_revision` |
 | `GET` | `/api/tasks?source=&day=&unplanned=&q=` | filtered task list |
 | `GET` | `/api/summary` | workload snapshot, including `current` |
 | `GET` | `/api/integrations?history=` | per-source health, state and last error |
 | `GET` | `/api/sync-log?limit=&source=` | raw recent sync attempts |
 | `POST` | `/api/sync` | pull now, body `{"sources": ["jira"]}` optional |
-| `PUT` | `/api/order` | body `{"ids": [...]}`, pins that prefix in that order |
+| `PUT` | `/api/order` | body `{"ids": [...], "revision": <integer>}`, pins that prefix in that order |
 | `DELETE` | `/api/order/{task_id}` | unpin, back to the default order |
 | `POST` | `/api/accept` | body `{"task_id"}`, new → list |
 | `POST` | `/api/dismiss` | body `{"task_id"}`, list → new |
 | `GET` | `/api/health` | liveness + configured sources |
+
+`/api/state` is read from one consistent point in time, so `tasks`, `new` and
+`order_revision` always describe the same moment — a concurrent sync or plan
+change can never pair a stale list with a newer revision.
+
+`PUT /api/order`'s `revision` is required, not optional: it must be the
+`order_revision` your client last read from `/api/state`. The server checks it
+against the current revision atomically with the write. A match is accepted
+and bumps the revision; a mismatch is rejected with `409` and the write does
+not happen — reload `/api/state` and retry with its `order_revision`. This is
+deliberate: making `revision` optional would let a client that read stale
+state (e.g. before a task got confirmed-reopened and dropped its old plan
+position) silently clobber whatever changed since, which is exactly the bug
+this contract exists to close.
 
 The web UI's CSS and JS are served at `/static/<file>?v=<content hash>`. The
 document itself is sent `Cache-Control: no-cache` so it always revalidates and

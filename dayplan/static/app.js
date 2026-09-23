@@ -14,6 +14,7 @@ const state = {
   hiddenSources: new Set(),
   dragId: null,
   dropped: false,
+  orderRevision: null,
 };
 
 /* ------------------------------------------------------------------ helpers */
@@ -349,6 +350,7 @@ async function refresh(background) {
     state.fresh = data.new || [];
     state.current = data.current;
     state.integrations = data.integrations || [];
+    state.orderRevision = data.order_revision;
 
     // A poll that brings back exactly what is already on screen must not
     // rebuild it: render() replaces every card, which throws away the Toggl
@@ -447,7 +449,7 @@ async function commitOrder(draggedId) {
   if (cut < 0) return;
   await api("/api/order", {
     method: "PUT",
-    body: JSON.stringify({ ids: displayed.slice(0, cut + 1) }),
+    body: JSON.stringify({ ids: displayed.slice(0, cut + 1), revision: state.orderRevision }),
   });
 }
 
