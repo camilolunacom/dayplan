@@ -188,7 +188,7 @@ export function samplePayload() {
   return {
     today: "2026-09-08",
     current: task("a"),
-    tasks: [task("a"), task("b", { pinned: false })],
+    tasks: [task("a"), task("b")],
     new: [task("c", { zone: "new", pinned: false })],
     summary: {},
     sources: ["ticktick"],

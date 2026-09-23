@@ -67,11 +67,12 @@ body {
   /* 100vh on a mobile browser counts the area behind the URL bar, so the last
      rows end up under the chrome with no way to scroll to them. dvh tracks the
      actually-visible height; vh stays as the fallback. */
-  height: 100vh;
-  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* ----------------------------------------------------------------- header */
@@ -143,17 +144,23 @@ button.primary[disabled] { opacity: 0.55; cursor: progress; }
 /* ----------------------------------------------------------------- layout */
 
 main {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   display: grid;
   /* Side by side when there is room; the list gets the larger share. */
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  grid-template-areas: "main new" "main later";
+  grid-template-rows: auto 1fr;
   gap: 18px;
-  min-height: 0;
+  align-items: start;
   padding: 16px 20px 0;
   max-width: 1500px;
   width: 100%;
   margin: 0 auto;
 }
+
+.panel-main { grid-area: main; }
+.panel-new { grid-area: new; }
+.panel-later { grid-area: later; }
 
 .panel {
   display: flex;
@@ -180,7 +187,7 @@ main {
 }
 .panel-head input[type="search"] { flex: 1; min-width: 120px; max-width: 260px; }
 
-.panel-new .list { opacity: 0.92; }
+.panel-new .list, .panel-later .list { opacity: 0.92; }
 
 /* --------------------------------------------------------------- featured */
 
@@ -248,14 +255,14 @@ main {
 /* -------------------------------------------------------------------- list */
 
 .list {
-  flex: 1 1 auto;
-  overflow-y: auto;
+  flex: 0 0 auto;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   gap: 5px;
   min-height: 0;
   padding-bottom: 24px;
-  overscroll-behavior: contain;
+  overscroll-behavior: auto;
 }
 .list.dropping { outline: 1px dashed var(--accent); outline-offset: 3px; border-radius: 6px; }
 
@@ -406,8 +413,22 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
    stays empty and collapses, so nothing shows for people who lack it. */
 .toggl-slot { display: inline-flex; align-items: center; }
 .toggl-slot:empty { display: none; }
+.card .toggl-slot {
+  /* Reserve the extension's footprint before it injects its button. Without
+     this, the side column grows after load and long titles reflow vertically. */
+  display: inline-flex;
+  width: 120px;
+  min-width: 120px;
+  min-height: 25px;
+  justify-content: center;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.card:hover .toggl-slot, .card:focus-within .toggl-slot { visibility: visible; opacity: 1; }
 .toggl-slot .toggl-button {
   font-size: 11.5px !important;
+  white-space: nowrap !important;
   text-decoration: none !important;
   color: var(--src, var(--accent)) !important;
 }
@@ -510,6 +531,8 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
 @media (max-width: 1100px) {
   main {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "main" "new" "later";
+    grid-template-rows: none;
     /* Both of these matter. Without them the grid has a definite height and
        stretches its two rows to an equal share (444px each here), while the
        lists inside are content-height with overflow visible -- so a long list
@@ -518,7 +541,7 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
        scroll instead. */
     grid-auto-rows: min-content;
     align-content: start;
-    overflow-y: auto;
+    overflow: visible;
     /* Clear the home indicator / browser chrome so the last card is reachable. */
     padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
     -webkit-overflow-scrolling: touch;

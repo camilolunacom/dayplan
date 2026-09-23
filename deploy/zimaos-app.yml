@@ -38,12 +38,12 @@ services:
         env_file:
             - /DATA/config/dayplan/.env
         environment:
-            DAYPLAN_SYNC_INTERVAL_MINUTES: "15"
+            DAYPLAN_SYNC_INTERVAL_MINUTES: "2"
             TZ: America/Bogota
         labels:
             icon: http://192.168.50.224:8787/static/icon.svg
             tsdproxy.enable: "true"
-            tsdproxy.name: dash
+            tsdproxy.name: dayplan
             tsdproxy.port.1: "443/https:8787/http"
             tsdproxy.funnel: "false"
         volumes:

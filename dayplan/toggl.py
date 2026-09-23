@@ -48,7 +48,7 @@ from typing import Any
 
 log = logging.getLogger("dayplan.toggl")
 
-MATCHERS = ("project_contains", "title_contains", "parent", "key_prefix", "tag")
+MATCHERS = ("project_id", "project_contains", "title_contains", "parent", "key_prefix", "tag")
 
 
 def load_rules(path: Path) -> dict[str, list[dict[str, Any]]]:
@@ -100,6 +100,15 @@ def load_rules(path: Path) -> dict[str, list[dict[str, Any]]]:
 
 def _matches(rule: dict[str, Any], task: Any) -> bool:
     """Every matcher present in the rule has to hold."""
+    if "project_id" in rule:
+        wanted = str(rule["project_id"])
+        memberships = (getattr(task, "raw", None) or {}).get("memberships") or []
+        project_ids = {
+            str((membership.get("project") or {}).get("gid"))
+            for membership in memberships
+        }
+        if wanted not in project_ids:
+            return False
     if "project_contains" in rule:
         needle = str(rule["project_contains"]).lower()
         if needle not in (task.project or "").lower():

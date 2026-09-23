@@ -20,8 +20,9 @@
       "toggl_project_id": 197054431
     },
     {
-      "_note": "same collision as above",
-      "project_contains": "Linnworks",
+      "_note": "The Asana project is Web Delivery inside the Linnworks workspace; match its project ID to avoid name ambiguity.",
+      "project_id": "1205642154828787",
+      "toggl_project": "Development - Website",
       "toggl_project_id": 218695668
     }
   ],

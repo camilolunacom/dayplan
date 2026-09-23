@@ -18,7 +18,7 @@
 </header>
 
 <main>
-  <section class="panel">
+  <section class="panel panel-main">
     <div class="panel-head">
       <h2>The list <span class="count" id="list-count">0</span></h2>
       <input type="search" id="search" placeholder="filter…" autocomplete="off">
@@ -34,6 +34,14 @@
     </div>
     <div class="list" id="new-list"></div>
     <div class="hint">Arrivals land here, so a sync never disturbs the order you set. Drag one across to keep it.</div>
+  </section>
+
+  <section class="panel panel-later">
+    <div class="panel-head">
+      <h2>Later <span class="count" id="later-count">0</span></h2>
+    </div>
+    <div class="list" id="later-list"></div>
+    <div class="hint">Seen tasks you have not ordered yet.</div>
   </section>
 </main>
 

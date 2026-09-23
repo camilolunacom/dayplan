@@ -3,6 +3,7 @@
 const el = (id) => document.getElementById(id);
 const list = el("task-list");
 const newList = el("new-list");
+const laterList = el("later-list");
 
 const state = {
   tasks: [],
@@ -82,25 +83,10 @@ function dueBadge(task) {
  * If the extension is absent or the domain is not mapped to DOM Integration in
  * its settings, the slot stays empty and `.toggl-slot:empty` collapses it.
  */
-// One slot element, reused across renders. render() rebuilds the whole list on
-// every load, and a fresh .toggl-root each time means the extension has to
-// notice and re-process it every single time — a race we do not need. Keeping
-// the node lets us only invalidate it when the featured task actually changes.
-let togglNode = null;
-let togglNodeTaskId = null;
-
 function togglSlot(task) {
-  if (!togglNode) {
-    togglNode = document.createElement("span");
-    togglNode.className = "toggl-slot toggl-root";
-  }
-  if (togglNodeTaskId !== task.id) {
-    // Different task: drop the button the extension built and the `toggl`
-    // marker it sets, so its `.toggl-root:not(.toggl)` selector matches again.
-    togglNode.replaceChildren();
-    togglNode.classList.remove("toggl");
-    togglNodeTaskId = task.id;
-  }
+  // Each card needs its own DOM Integration root so every task can be timed.
+  const togglNode = document.createElement("span");
+  togglNode.className = "toggl-slot toggl-root";
   togglNode.dataset.description = task.title;
   // Only the NAME does anything. The extension's resolve-project handler takes
   // { projectName, selectedWorkspaceId } and nothing else; data-project-id is
@@ -182,6 +168,8 @@ function buildCard(task, rank, isFeatured = false) {
 
   const side = document.createElement("div");
   side.className = "side";
+  // Keep Toggl before the task action so accept/unpin stays at the far right.
+  side.appendChild(togglSlot(task));
   if (task.zone === "new") {
     const accept = document.createElement("button");
     accept.className = "iconbtn accept";
@@ -200,8 +188,6 @@ function buildCard(task, rank, isFeatured = false) {
     });
     side.appendChild(accept);
   }
-  // The Toggl button belongs only to the task being worked on.
-  if (isFeatured) side.appendChild(togglSlot(task));
   if (task.pinned) {
     const unpin = document.createElement("button");
     unpin.className = "iconbtn";
@@ -253,7 +239,8 @@ function matchesFilter(task) {
 }
 
 function render() {
-  const tasks = state.tasks.filter(matchesFilter);
+  const tasks = state.tasks.filter((task) => task.pinned && matchesFilter(task));
+  const later = state.tasks.filter((task) => !task.pinned && matchesFilter(task));
   const fresh = state.fresh.filter(matchesFilter);
 
   list.replaceChildren();
@@ -263,18 +250,20 @@ function render() {
     empty.textContent = state.tasks.length ? "Nothing matches." : "Nothing in the list yet.";
     list.appendChild(empty);
   } else {
-    let dividerDone = !tasks.some((t) => t.pinned);
     tasks.forEach((task, index) => {
-      if (!dividerDone && !task.pinned) {
-        const divider = document.createElement("div");
-        divider.className = "divider";
-        divider.textContent = "unordered";
-        list.appendChild(divider);
-        dividerDone = true;
-      }
-      // Position 1 is the task being worked on: same list, bigger card.
+      // Position 1 is the task being worked on.
       list.appendChild(buildCard(task, index + 1, index === 0));
     });
+  }
+
+  laterList.replaceChildren();
+  if (!later.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = state.tasks.some((t) => !t.pinned) ? "Nothing matches." : "Nothing for later.";
+    laterList.appendChild(empty);
+  } else {
+    later.forEach((task) => laterList.appendChild(buildCard(task, "", false)));
   }
 
   newList.replaceChildren();
@@ -297,6 +286,8 @@ function render() {
     fresh.length === state.fresh.length
       ? `${fresh.length}`
       : `${fresh.length} / ${state.fresh.length}`;
+  const laterTotal = state.tasks.filter((task) => !task.pinned).length;
+  el("later-count").textContent = later.length === laterTotal ? `${later.length}` : `${later.length} / ${laterTotal}`;
 
   const everything = [...state.tasks, ...state.fresh];
   const overdue = everything.filter((t) => t.overdue).length;
@@ -474,7 +465,7 @@ const drag = {
   scrollTimer: null,
 };
 
-const CONTAINERS = () => [list, newList];
+const CONTAINERS = () => [list, newList, laterList];
 
 function containerUnder(x, y) {
   for (const container of CONTAINERS()) {
@@ -575,7 +566,9 @@ async function endDrag(event, cancelled = false) {
     }
 
     const nowInNew = newList.contains(card);
+    const nowInLater = laterList.contains(card);
     const wasNew = from === newList;
+    const wasLater = from === laterList;
 
     try {
       if (nowInNew) {
@@ -584,6 +577,12 @@ async function endDrag(event, cancelled = false) {
           return;
         }
         await api("/api/dismiss", { method: "POST", body: JSON.stringify({ task_id: id }) });
+      } else if (nowInLater) {
+        if (wasLater) {
+          render();
+          return;
+        }
+        await api(`/api/order/${encodeURIComponent(id)}`, { method: "DELETE" });
       } else {
         // Landing in the list pins the prefix, which also accepts a new task in
         // one move: it comes out of the pile with a real position.

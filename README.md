@@ -173,23 +173,26 @@ come in at priority 0. TickTick and Jira priorities are normalized to 0-3.
 It lives on the host as a registered ZimaOS app and is reached over Tailscale
 at `https://<tsdproxy-name>.<your-tailnet>.ts.net`.
 
-```bash
-ssh zima
-cd /DATA/AppData/dayplan
-cp .env.example .env    # then fill in the tokens
-DOCKER_CONFIG=/DATA/.docker docker compose up -d --build
-DOCKER_CONFIG=/DATA/.docker docker compose logs -f dayplan
-```
+Production source lives at `/DATA/src/dayplan`, configuration and secrets at
+`/DATA/config/dayplan`, and durable application data at
+`/DATA/AppData/dayplan/data`. ZimaOS manages the app from
+`deploy/zimaos-app.yml`; the repository `docker-compose.yml` is for local
+development only and must never be used to start production.
+
+> **Every production change must be committed before it is synced, built, or
+> applied.** Run the tests, create the commit, verify the working tree is clean,
+> and record `git rev-parse HEAD` before touching `/DATA/src/dayplan`. Never
+> deploy directly from uncommitted working-tree files.
 
 `DOCKER_CONFIG=/DATA/.docker` is not optional on ZimaOS: `/root` is a
 read-only filesystem, so the Docker CLI dies with
 `mkdir /root/.docker: read-only file system` without it. The first build takes
 about ten minutes on this hardware.
 
-The container keeps its SQLite file in the `dayplan-data` volume mounted at
-`/data`, so rebuilds do not lose your plan. `TZ` defaults to `America/Bogota`:
-dayplan decides what "today" means from the container clock, so if that is
-wrong every due date shifts by a day.
+The container bind-mounts `/DATA/AppData/dayplan/data` at `/data`. Rebuilds keep
+that directory, but uninstalling the ZimaOS app deletes it. `TZ` defaults to
+`America/Bogota`: dayplan decides what "today" means from the container clock,
+so if that is wrong every due date shifts by a day.
 
 To run the CLI against the hosted instance:
 
@@ -233,6 +236,14 @@ irreplaceable:
 Deploying a new build:
 
 ```bash
+# On the development machine. This must print nothing after the commit.
+git status --short
+git rev-parse HEAD
+rsync -ani --delete \
+  --exclude='.git/' --exclude='.venv/' --exclude='.env' --exclude='__pycache__/' \
+  ./ zima:/DATA/src/dayplan/
+# Review the dry run, then repeat it without -n.
+
 ssh zima
 export DOCKER_CONFIG=/DATA/.docker
 cd /DATA/src/dayplan && docker compose build          # ~10 min on this box
