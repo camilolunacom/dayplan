@@ -412,10 +412,9 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
    button into .toggl-root. We render an empty slot: with no extension it
    stays empty and collapses, so nothing shows for people who lack it. */
 .toggl-slot { display: inline-flex; align-items: center; }
-.toggl-slot:empty { display: none; }
+.card .toggl-slot:empty { display: none; }
 .card .toggl-slot {
-  /* Reserve the extension's footprint before it injects its button. Without
-     this, the side column grows after load and long titles reflow vertically. */
+  /* Size the injected control consistently; empty slots are hidden above. */
   display: inline-flex;
   width: 120px;
   min-width: 120px;
@@ -565,4 +564,20 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
 @media (max-width: 700px) {
   .featured { grid-template-columns: 1fr; }
   .featured .fside { grid-column: 1; grid-row: auto; align-items: flex-start; }
+  /* Keep the whole title column available on a phone, even when Toggl loads.
+     Actions live below the title rather than taking a second title column. */
+  .card {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "idx title" "idx side" "idx meta";
+  }
+  .card.featured {
+    grid-template-areas: "idx eyebrow" "idx title" "idx side" "idx meta";
+  }
+  .card .side { justify-content: flex-end; min-height: 30px; }
+  .card .side:has(> .toggl-slot:empty):not(:has(> .iconbtn)) { display: none; }
+}
+
+@media (hover: none) {
+  /* Touch screens have no reliable hover; expose the injected timer directly. */
+  .card .toggl-slot:not(:empty) { visibility: visible; opacity: 1; }
 }
