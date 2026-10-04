@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import store
@@ -118,6 +118,14 @@ def create_app() -> FastAPI:
     def health() -> dict[str, Any]:
         cfg = load_config()
         return {"ok": True, "sources": cfg.enabled_sources()}
+
+    @app.get("/api/current-task", response_class=PlainTextResponse)
+    def current_task(conn: sqlite3.Connection = Depends(get_conn)) -> Response:
+        """Return only the first title in the same plan order as the UI."""
+        tasks = store.ordered_tasks(conn)
+        if not tasks:
+            return Response(status_code=204, headers={"Cache-Control": "no-store"})
+        return PlainTextResponse(tasks[0]["title"], headers={"Cache-Control": "no-store"})
 
     @app.get("/api/state")
     def state(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
