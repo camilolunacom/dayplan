@@ -413,6 +413,12 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
   border: 1px solid var(--ui-2);
   white-space: nowrap;
 }
+.badge.project {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .badge.source { color: var(--src); border-color: var(--src); }
 .badge.due-over { color: var(--red); border-color: var(--red); }
 .badge.due-today { color: var(--orange); border-color: var(--orange); }

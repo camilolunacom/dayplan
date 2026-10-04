@@ -127,7 +127,7 @@ function metaNodes(task, into) {
   const due = dueBadge(task);
   if (due) into.appendChild(due);
   if (task.priority > 0) into.appendChild(badge("badge prio", PRIORITY_LABEL[task.priority]));
-  if (task.project) into.appendChild(badge("badge", task.project));
+  if (task.project) into.appendChild(badge("badge project", task.project));
   for (const tag of task.tags || []) into.appendChild(badge("badge", `#${tag}`));
 }
 
