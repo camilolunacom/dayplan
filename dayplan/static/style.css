@@ -81,7 +81,10 @@ header {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 10px 20px;
+  padding: calc(10px + env(safe-area-inset-top, 0px))
+    max(20px, env(safe-area-inset-right, 0px)) 10px
+    max(20px, env(safe-area-inset-left, 0px));
+  flex-wrap: wrap;
   background: var(--bg-2);
   border-bottom: 1px solid var(--ui);
   flex: 0 0 auto;
@@ -94,6 +97,25 @@ header {
 .stats b { color: var(--tx); font-weight: 600; }
 .stats .bad { color: var(--red); }
 .stats .bad b { color: var(--red); }
+.stats > span { white-space: nowrap; }
+.integ { white-space: nowrap; flex-shrink: 0; }
+
+/* Keep Sync reachable and counters intact on phones, rather than clipping a
+   single over-wide flex row. Provider buttons get their own wrapping row. */
+@media (max-width: 700px) {
+  header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "brand sync" "stats stats" "integrations integrations";
+    gap: 8px 12px;
+  }
+  header .brand { grid-area: brand; }
+  header .spacer { display: none; }
+  header .stats { grid-area: stats; flex-wrap: wrap; }
+  header .integrations { grid-area: integrations; flex-wrap: wrap; }
+  header #sync { grid-area: sync; min-height: 40px; }
+  header .integ { min-height: 32px; }
+}
 
 button, input[type="search"] {
   background: var(--bg);
@@ -152,7 +174,9 @@ main {
   grid-template-rows: auto 1fr;
   gap: 18px;
   align-items: start;
-  padding: 16px 20px 0;
+  /* viewport-fit=cover: keep cards clear of a landscape notch, like header. */
+  padding: 16px max(20px, env(safe-area-inset-right, 0px)) 0
+    max(20px, env(safe-area-inset-left, 0px));
   max-width: 1500px;
   width: 100%;
   margin: 0 auto;
@@ -440,6 +464,7 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
   top: 0; right: 0;
   width: min(560px, 94vw);
   height: 100vh;
+  padding-right: env(safe-area-inset-right, 0px);
   background: var(--bg-2);
   border-left: 1px solid var(--ui-2);
   box-shadow: -14px 0 34px -18px var(--shadow);
@@ -454,7 +479,9 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  /* The top inset lives here, not on .drawer, so the sticky head's background
+     still covers the status bar area once the drawer scrolls. */
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 12px;
   border-bottom: 1px solid var(--ui-2);
   position: sticky;
   top: 0;
@@ -509,7 +536,7 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
 
 .toast {
   position: fixed;
-  bottom: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%) translateY(140%);
   background: var(--bg-2);

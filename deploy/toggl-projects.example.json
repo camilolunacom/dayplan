@@ -15,8 +15,9 @@
   ],
   "asana": [
     {
-      "_note": "283 active projects are named 'Development - Website', one per client, so the name cannot identify this one. Tracks unprojected.",
+      "_note": "Confirmed unique name in Toggl for Open Path Websites.",
       "project_contains": "Open Path",
+      "toggl_project": "Development - OPC Websites",
       "toggl_project_id": 197054431
     },
     {
@@ -31,8 +32,9 @@
     { "parent": "ALHM-6", "toggl_project": "Hosting: Tickets", "toggl_project_id": 210510092 },
     { "key_prefix": "TN", "toggl_project": "Development - Website -- Maintenance", "toggl_project_id": 182545135 },
     {
-      "_note": "246 active projects are named 'Development - Application'. Tracks unprojected.",
+      "_note": "Confirmed unique name in Toggl for Themekraft Plugins.",
       "key_prefix": "TKT",
+      "toggl_project": "Development - Themekraft Plugins",
       "toggl_project_id": 205762591
     }
   ]
