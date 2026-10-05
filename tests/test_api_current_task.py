@@ -142,6 +142,23 @@ class CurrentTaskTests(unittest.TestCase):
         self.assertIsNone(task['toggl_project'])
         self.assertIsNone(task['toggl_project_id'])
 
+    def test_invalid_configured_project_id_fails_without_guessing(self):
+        self.sync_with([remote('A')])
+        with closing(connect(self.cfg.db_path)) as conn:
+            store.set_order(conn, ['ticktick:A'])
+        for invalid_id in (0, -1):
+            with self.subTest(project_id=invalid_id):
+                self.cfg.toggl_project_map.write_text(json.dumps({
+                    'ticktick': [{'title_contains': 'Task A',
+                                 'toggl_project': 'Configured project',
+                                 'toggl_project_id': invalid_id}],
+                }), encoding='utf-8')
+                self.sync_with([remote('A')])
+                response = self.client.get('/api/current-task')
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.headers['cache-control'], 'no-store')
+                self.assertNotIn('task', response.json())
+
     def test_empty_plan_returns_204_even_when_new_tasks_exist(self):
         self.sync_with([remote('NEW')])
         response = self.client.get('/api/current-task')

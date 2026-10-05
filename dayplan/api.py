@@ -126,6 +126,13 @@ def create_app() -> FastAPI:
         if not tasks:
             return Response(status_code=204, headers={"Cache-Control": "no-store"})
         task = tasks[0]
+        project_id = task["toggl_project_id"]
+        if project_id is not None and (type(project_id) is not int or project_id <= 0):
+            raise HTTPException(
+                status_code=503,
+                detail="Current task has an invalid Toggl project mapping",
+                headers={"Cache-Control": "no-store"},
+            )
         return JSONResponse(
             {
                 "schema_version": 1,

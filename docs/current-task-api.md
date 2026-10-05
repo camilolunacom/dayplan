@@ -4,7 +4,8 @@
 
 - `200 OK`: minimal task metadata as `application/json`, with the exact title and stable task ID.
 - `204 No Content`: the main plan is empty; the response body is empty.
-- Both responses use `Cache-Control: no-store`.
+- `503 Service Unavailable`: the selected task has an invalid configured Toggl project ID. Fix the mapping; the endpoint does not guess a replacement or silently unmap the task.
+- Successful, empty, and invalid-mapping responses use `Cache-Control: no-store`.
 - Reads do not reorder, acknowledge, or modify tasks.
 - Unsupported write methods return `405 Method Not Allowed`.
 
