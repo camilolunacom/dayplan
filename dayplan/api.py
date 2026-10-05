@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import store
@@ -119,13 +119,23 @@ def create_app() -> FastAPI:
         cfg = load_config()
         return {"ok": True, "sources": cfg.enabled_sources()}
 
-    @app.get("/api/current-task", response_class=PlainTextResponse)
+    @app.get("/api/current-task", response_class=JSONResponse)
     def current_task(conn: sqlite3.Connection = Depends(get_conn)) -> Response:
-        """Return only the first title in the same plan order as the UI."""
+        """Return minimal metadata for the first task in the UI's plan order."""
         tasks = store.ordered_tasks(conn)
         if not tasks:
             return Response(status_code=204, headers={"Cache-Control": "no-store"})
-        return PlainTextResponse(tasks[0]["title"], headers={"Cache-Control": "no-store"})
+        task = tasks[0]
+        return JSONResponse(
+            {
+                "schema_version": 1,
+                "task": {
+                    key: task[key]
+                    for key in ("id", "title", "project", "toggl_project", "toggl_project_id")
+                },
+            },
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/api/state")
     def state(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:

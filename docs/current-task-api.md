@@ -2,17 +2,32 @@
 
 `GET /api/current-task` returns the first open task in the same order as the main Dayplan list. Manually positioned tasks come first, followed by acknowledged unranked tasks. New, untriaged tasks are excluded. No Toggl timer is consulted.
 
-- `200 OK`: exact task title as `text/plain; charset=utf-8`, without JSON, added newline, project metadata, IDs, or links.
+- `200 OK`: minimal task metadata as `application/json`, with the exact title and stable task ID.
 - `204 No Content`: the main plan is empty; the response body is empty.
 - Both responses use `Cache-Control: no-store`.
 - Reads do not reorder, acknowledge, or modify tasks.
 - Unsupported write methods return `405 Method Not Allowed`.
 
+```json
+{
+  "schema_version": 1,
+  "task": {
+    "id": "ticktick:stable-task-id",
+    "title": "Diseñar café ☕",
+    "project": "Source project label",
+    "toggl_project": "Exact Toggl project name",
+    "toggl_project_id": 123456
+  }
+}
+```
+
+`id` and `title` are required strings. `project`, `toggl_project`, and `toggl_project_id` are nullable; a mapped project ID is a positive integer. The mapping fields come from the existing Dayplan mapping, without guessing from the source-project label. A task without a mapping has null Toggl fields and remains trackable without a project. The response contains only the fields shown above, excluding notes, raw provider data, URLs, and timer state.
+
 ## Public deployment authentication
 
 The public deployment uses a path-specific Cloudflare Access application with a Service Auth policy. Each client sends its own `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers on every request. Browser login is not required for these clients. Credentials are not query parameters and must not be committed, printed, or embedded in distributed firmware.
 
-Use separate revocable tokens for hardware and desktop clients. Validate HTTPS certificates and handle authentication errors without treating an HTML login/error page as a task title. Only display a response with status 200 and a plain-text content type; clear the display on 204, and mark stale data or connectivity failures explicitly.
+Use separate revocable tokens for hardware and desktop clients. Validate HTTPS certificates and handle authentication errors without treating an HTML login/error page as a task title. Only display a response with status 200, an `application/json` content type, and a valid version-1 schema; reject unknown schema versions and invalid field types. Clear the display on 204, and mark stale data or connectivity failures explicitly.
 
 The tunnel must select the exact endpoint path before the general website ingress and validate the endpoint Access application's audience there. Other paths retain the website application's audience and email login policy. A token for the endpoint must not authorize the website, state API, or task mutation routes. The application itself remains unauthenticated on trusted LAN/Tailnet paths; Cloudflare provides public-path authentication.
 
