@@ -1,17 +1,38 @@
 """Current-task JSON contract through the real API and SQLite store."""
 import json
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 from contextlib import closing
 
 from fastapi.testclient import TestClient
 from dayplan import api, store
 from dayplan.db import connect
-from _support import TempDbCase, remote
+from dayplan.config import Config
+from dayplan.providers.base import RemoteTask
 
 
-class CurrentTaskTests(TempDbCase, unittest.TestCase):
+def remote(external_id, title=None, **extra):
+    return RemoteTask(source="ticktick", external_id=external_id,
+                      title=title or f"Task {external_id}", **extra)
+
+
+class CurrentTaskTests(unittest.TestCase):
     def setUp(self):
-        super().setUp()
+        temporary = tempfile.TemporaryDirectory(prefix="dayplan-current-task-")
+        self.addCleanup(temporary.cleanup)
+        directory = Path(temporary.name)
+        self.cfg = Config(
+            db_path=directory / "dayplan.sqlite", ticktick_token="test-token",
+            ticktick_token_source="TICKTICK_TOKEN", asana_token=None,
+            asana_workspaces=(), asana_projects=(), asana_sections=(),
+            asana_only_mine=True, asana_include_subtasks=True,
+            ticktick_due_within_days=None, ticktick_include_undated=True,
+            jira_base_url=None, jira_site_url=None, jira_email=None,
+            jira_api_token=None, jira_jql="", sync_interval_minutes=0,
+            toggl_project_map=directory / "toggl-projects.json",
+        )
         self.app = api.create_app()
 
         def override_conn():
@@ -24,6 +45,10 @@ class CurrentTaskTests(TempDbCase, unittest.TestCase):
         self.app.dependency_overrides[api.get_conn] = override_conn
         self.client = TestClient(self.app)
         self.addCleanup(self.client.close)
+
+    def sync_with(self, tasks):
+        with patch("dayplan.store.fetch_all", return_value=({"ticktick": tasks}, {})):
+            return store.sync(self.cfg, ["ticktick"], trigger="cli")
 
     def test_returns_only_first_manual_task_metadata_as_json_without_cache(self):
         self.sync_with([
