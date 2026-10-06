@@ -67,11 +67,12 @@ body {
   /* 100vh on a mobile browser counts the area behind the URL bar, so the last
      rows end up under the chrome with no way to scroll to them. dvh tracks the
      actually-visible height; vh stays as the fallback. */
-  height: 100vh;
-  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* ----------------------------------------------------------------- header */
@@ -80,7 +81,10 @@ header {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 10px 20px;
+  padding: calc(10px + env(safe-area-inset-top, 0px))
+    max(20px, env(safe-area-inset-right, 0px)) 10px
+    max(20px, env(safe-area-inset-left, 0px));
+  flex-wrap: wrap;
   background: var(--bg-2);
   border-bottom: 1px solid var(--ui);
   flex: 0 0 auto;
@@ -93,6 +97,25 @@ header {
 .stats b { color: var(--tx); font-weight: 600; }
 .stats .bad { color: var(--red); }
 .stats .bad b { color: var(--red); }
+.stats > span { white-space: nowrap; }
+.integ { white-space: nowrap; flex-shrink: 0; }
+
+/* Keep Sync reachable and counters intact on phones, rather than clipping a
+   single over-wide flex row. Provider buttons get their own wrapping row. */
+@media (max-width: 700px) {
+  header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "brand sync" "stats stats" "integrations integrations";
+    gap: 8px 12px;
+  }
+  header .brand { grid-area: brand; }
+  header .spacer { display: none; }
+  header .stats { grid-area: stats; flex-wrap: wrap; }
+  header .integrations { grid-area: integrations; flex-wrap: wrap; }
+  header #sync { grid-area: sync; min-height: 40px; }
+  header .integ { min-height: 32px; }
+}
 
 button, input[type="search"] {
   background: var(--bg);
@@ -143,17 +166,25 @@ button.primary[disabled] { opacity: 0.55; cursor: progress; }
 /* ----------------------------------------------------------------- layout */
 
 main {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   display: grid;
   /* Side by side when there is room; the list gets the larger share. */
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  grid-template-areas: "main new" "main later";
+  grid-template-rows: auto 1fr;
   gap: 18px;
-  min-height: 0;
-  padding: 16px 20px 0;
+  align-items: start;
+  /* viewport-fit=cover: keep cards clear of a landscape notch, like header. */
+  padding: 16px max(20px, env(safe-area-inset-right, 0px)) 0
+    max(20px, env(safe-area-inset-left, 0px));
   max-width: 1500px;
   width: 100%;
   margin: 0 auto;
 }
+
+.panel-main { grid-area: main; }
+.panel-new { grid-area: new; }
+.panel-later { grid-area: later; }
 
 .panel {
   display: flex;
@@ -180,7 +211,7 @@ main {
 }
 .panel-head input[type="search"] { flex: 1; min-width: 120px; max-width: 260px; }
 
-.panel-new .list { opacity: 0.92; }
+.panel-new .list, .panel-later .list { opacity: 0.92; }
 
 /* --------------------------------------------------------------- featured */
 
@@ -248,14 +279,14 @@ main {
 /* -------------------------------------------------------------------- list */
 
 .list {
-  flex: 1 1 auto;
-  overflow-y: auto;
+  flex: 0 0 auto;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   gap: 5px;
   min-height: 0;
   padding-bottom: 24px;
-  overscroll-behavior: contain;
+  overscroll-behavior: auto;
 }
 .list.dropping { outline: 1px dashed var(--accent); outline-offset: 3px; border-radius: 6px; }
 
@@ -382,6 +413,12 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
   border: 1px solid var(--ui-2);
   white-space: nowrap;
 }
+.badge.project {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .badge.source { color: var(--src); border-color: var(--src); }
 .badge.due-over { color: var(--red); border-color: var(--red); }
 .badge.due-today { color: var(--orange); border-color: var(--orange); }
@@ -405,9 +442,22 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
    button into .toggl-root. We render an empty slot: with no extension it
    stays empty and collapses, so nothing shows for people who lack it. */
 .toggl-slot { display: inline-flex; align-items: center; }
-.toggl-slot:empty { display: none; }
+.card .toggl-slot:empty { display: none; }
+.card .toggl-slot {
+  /* Size the injected control consistently; empty slots are hidden above. */
+  display: inline-flex;
+  width: 120px;
+  min-width: 120px;
+  min-height: 25px;
+  justify-content: center;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.card:hover .toggl-slot, .card:focus-within .toggl-slot { visibility: visible; opacity: 1; }
 .toggl-slot .toggl-button {
   font-size: 11.5px !important;
+  white-space: nowrap !important;
   text-decoration: none !important;
   color: var(--src, var(--accent)) !important;
 }
@@ -420,6 +470,7 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
   top: 0; right: 0;
   width: min(560px, 94vw);
   height: 100vh;
+  padding-right: env(safe-area-inset-right, 0px);
   background: var(--bg-2);
   border-left: 1px solid var(--ui-2);
   box-shadow: -14px 0 34px -18px var(--shadow);
@@ -434,7 +485,9 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  /* The top inset lives here, not on .drawer, so the sticky head's background
+     still covers the status bar area once the drawer scrolls. */
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 12px;
   border-bottom: 1px solid var(--ui-2);
   position: sticky;
   top: 0;
@@ -489,7 +542,7 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
 
 .toast {
   position: fixed;
-  bottom: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%) translateY(140%);
   background: var(--bg-2);
@@ -510,6 +563,8 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
 @media (max-width: 1100px) {
   main {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "main" "new" "later";
+    grid-template-rows: none;
     /* Both of these matter. Without them the grid has a definite height and
        stretches its two rows to an equal share (444px each here), while the
        lists inside are content-height with overflow visible -- so a long list
@@ -518,7 +573,7 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
        scroll instead. */
     grid-auto-rows: min-content;
     align-content: start;
-    overflow-y: auto;
+    overflow: visible;
     /* Clear the home indicator / browser chrome so the last card is reachable. */
     padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
     -webkit-overflow-scrolling: touch;
@@ -542,4 +597,20 @@ body.dragging .list, body.dragging main { overscroll-behavior: contain; }
 @media (max-width: 700px) {
   .featured { grid-template-columns: 1fr; }
   .featured .fside { grid-column: 1; grid-row: auto; align-items: flex-start; }
+  /* Keep the whole title column available on a phone, even when Toggl loads.
+     Actions live below the title rather than taking a second title column. */
+  .card {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "idx title" "idx side" "idx meta";
+  }
+  .card.featured {
+    grid-template-areas: "idx eyebrow" "idx title" "idx side" "idx meta";
+  }
+  .card .side { justify-content: flex-end; min-height: 30px; }
+  .card .side:has(> .toggl-slot:empty):not(:has(> .iconbtn)) { display: none; }
+}
+
+@media (hover: none) {
+  /* Touch screens have no reliable hover; expose the injected timer directly. */
+  .card .toggl-slot:not(:empty) { visibility: visible; opacity: 1; }
 }

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
+import os
 import sqlite3
 from pathlib import Path
+from typing import Iterator
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -158,16 +162,89 @@ def _drop_unused_plan_columns(conn: sqlite3.Connection) -> None:
 
 def _add_missing_columns(conn: sqlite3.Connection) -> None:
     """ALTER TABLE ADD COLUMN is safe and cheap in SQLite; CREATE TABLE IF NOT
-    EXISTS will not add a column to a table that already exists."""
-    have = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
-    wanted = {"toggl_project_id": "INTEGER", "toggl_project": "TEXT"}
-    added = False
-    for column, kind in wanted.items():
-        if column not in have:
-            conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {kind}")
-            added = True
-    if added:
-        conn.commit()
+    EXISTS will not add a column to a table that already exists.
+
+    `BEGIN IMMEDIATE` before the first `PRAGMA table_info` read, and rechecking
+    it once the lock is held, closes a race between two first-ever callers
+    (two threads, or the CLI and the server starting at once against the same
+    unmigrated file): without it both can see the same missing columns and
+    both attempt the same `ALTER TABLE`, and the loser gets a duplicate-column
+    error instead of a clean no-op.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        have = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+        wanted = {
+            "toggl_project_id": "INTEGER",
+            "toggl_project": "TEXT",
+            # Absence hysteresis: a task only counts as genuinely gone from a
+            # source after two consecutive non-empty syncs omit it in a row, so
+            # one partial/flaky provider response never closes it. needs_retriage
+            # marks a task that was closed this way, so its return -- not just any
+            # reopen -- is the trigger that clears its old plan row. reappeared_at
+            # is the timestamp that return gets, so it sorts as a fresh New-pile
+            # arrival instead of by its original first_seen.
+            "absence_streak": "INTEGER NOT NULL DEFAULT 0",
+            "needs_retriage": "INTEGER NOT NULL DEFAULT 0",
+            "reappeared_at": "TEXT",
+        }
+        added = False
+        retriage_added = False
+        for column, kind in wanted.items():
+            if column not in have:
+                conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {kind}")
+                added = True
+                if column == "needs_retriage":
+                    retriage_added = True
+
+        if retriage_added:
+            # Every legacy `closed = 1` row got there under a runtime that had
+            # no absence hysteresis and no retriage flag at all: back then
+            # `closed` meant exactly what `needs_retriage` means now, a
+            # provider disappearance. Flag them the same way a freshly
+            # confirmed departure would be, so a later return is recognized
+            # as a reopen -- and drops its stale plan position -- instead of
+            # being treated as an ordinary update. Deletion still waits for
+            # that actual return; the migration itself never touches `plan`.
+            conn.execute("UPDATE tasks SET needs_retriage = 1 WHERE closed = 1")
+
+        if added:
+            conn.commit()
+        else:
+            conn.rollback()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _migration_lock_path(db_path: Path) -> Path:
+    return db_path.parent / f"{db_path.name}.migrate.lock"
+
+
+@contextlib.contextmanager
+def _migration_lock(db_path: Path) -> Iterator[None]:
+    """Serialize schema creation and the whole migration chain across every
+    thread and process that shares this database path.
+
+    `_add_missing_columns` guards itself with `BEGIN IMMEDIATE`, but the
+    legacy migration helpers that run after it
+    (`_migrate_plan_position_nullable`, `_migrate_days_into_one_list`,
+    `_drop_unused_plan_columns`, `_drop_plan_day`) each start and commit
+    their own transaction and are not otherwise serialized: two first
+    `connect()` calls against an older schema can interleave mid-chain and
+    hit `no such column: day` or `database is locked`. `flock` on a file next
+    to the database serializes the entire sequence regardless of process
+    boundary; opening an independent fd per call means the lock is released
+    by close (or by the process dying) without needing any cleanup
+    handshake, and it coexists fine with the inner `BEGIN IMMEDIATE`.
+    """
+    lock_path = _migration_lock_path(db_path)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -180,16 +257,21 @@ def connect(db_path: Path) -> sqlite3.Connection:
     # sequential calls happen to reuse a thread, parallel ones do not.
     conn = sqlite3.connect(db_path, timeout=15.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=15000")
-    conn.executescript(SCHEMA)
-    conn.commit()
-    _add_missing_columns(conn)
-    _migrate_plan_position_nullable(conn)
-    _migrate_days_into_one_list(conn)
-    _drop_unused_plan_columns(conn)
-    _drop_plan_day(conn)
+    with _migration_lock(db_path):
+        # busy_timeout first and foremost: it defaults to 0, so any pragma or
+        # DDL below that briefly contends with another connection before this
+        # is set would raise "database is locked" immediately instead of
+        # retrying -- exactly the failure this lock exists to prevent.
+        conn.execute("PRAGMA busy_timeout=15000")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.executescript(SCHEMA)
+        conn.commit()
+        _add_missing_columns(conn)
+        _migrate_plan_position_nullable(conn)
+        _migrate_days_into_one_list(conn)
+        _drop_unused_plan_columns(conn)
+        _drop_plan_day(conn)
     return conn
 
 
