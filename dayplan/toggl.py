@@ -48,7 +48,7 @@ from typing import Any
 
 log = logging.getLogger("dayplan.toggl")
 
-MATCHERS = ("project_contains", "title_contains", "parent", "key_prefix", "tag")
+MATCHERS = ("project_id", "project_contains", "title_contains", "parent", "key_prefix", "tag")
 
 
 def load_rules(path: Path) -> dict[str, list[dict[str, Any]]]:
@@ -75,10 +75,15 @@ def load_rules(path: Path) -> dict[str, list[dict[str, Any]]]:
                 continue
             name = entry.get("toggl_project")
             raw_id = entry.get("toggl_project_id")
-            try:
-                project_id = int(raw_id) if raw_id is not None else None
-            except (TypeError, ValueError):
+            if raw_id is None:
                 project_id = None
+            elif type(raw_id) is int and 0 < raw_id <= 9223372036854775807:
+                project_id = raw_id
+            else:
+                # Keep invalid configuration distinct from an absent mapping.
+                # Zero is SQLite-safe and makes the display API return 503.
+                project_id = 0
+                log.warning("invalid Toggl project ID in %s for source %s", path, source)
             matchers = {k: v for k, v in entry.items() if k in MATCHERS}
             if not matchers:
                 log.warning("rule with no matcher, it would match everything: %r", entry)
@@ -100,6 +105,15 @@ def load_rules(path: Path) -> dict[str, list[dict[str, Any]]]:
 
 def _matches(rule: dict[str, Any], task: Any) -> bool:
     """Every matcher present in the rule has to hold."""
+    if "project_id" in rule:
+        wanted = str(rule["project_id"])
+        memberships = (getattr(task, "raw", None) or {}).get("memberships") or []
+        project_ids = {
+            str((membership.get("project") or {}).get("gid"))
+            for membership in memberships
+        }
+        if wanted not in project_ids:
+            return False
     if "project_contains" in rule:
         needle = str(rule["project_contains"]).lower()
         if needle not in (task.project or "").lower():

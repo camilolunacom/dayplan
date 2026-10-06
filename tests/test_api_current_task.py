@@ -146,7 +146,8 @@ class CurrentTaskTests(unittest.TestCase):
         self.sync_with([remote('A')])
         with closing(connect(self.cfg.db_path)) as conn:
             store.set_order(conn, ['ticktick:A'])
-        for invalid_id in (0, -1):
+        for invalid_id in (0, -1, True, False, 1.9, 'not-a-number', '123',
+                           '1_0', [], {}, 9223372036854775808):
             with self.subTest(project_id=invalid_id):
                 self.cfg.toggl_project_map.write_text(json.dumps({
                     'ticktick': [{'title_contains': 'Task A',

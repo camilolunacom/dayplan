@@ -22,7 +22,9 @@
 }
 ```
 
-`id` and `title` are required strings. `project`, `toggl_project`, and `toggl_project_id` are nullable; a mapped project ID is a positive integer. The mapping fields come from the existing Dayplan mapping, without guessing from the source-project label. A task without a mapping has null Toggl fields and remains trackable without a project. The response contains only the fields shown above, excluding notes, raw provider data, URLs, and timer state.
+`id` and `title` are required strings. `project`, `toggl_project`, and `toggl_project_id` are nullable; a mapped project ID must be a JSON integer from 1 through 9223372036854775807. Boolean, string, fractional, non-positive, and out-of-range IDs are invalid, not coerced. The mapping fields come from the existing Dayplan mapping, without guessing from the source-project label. A task without a mapping has null Toggl fields and remains trackable without a project. The response contains only the fields shown above, excluding notes, raw provider data, URLs, and timer state.
+
+Mapping metadata is cached during task sync. After correcting an invalid mapping, run a successful sync for the task's source before retrying the endpoint. If that provider is unavailable, the cached invalid mapping remains and the endpoint continues to return 503; clients should retain the last successful task with a stale/error indicator rather than clear it as an empty plan.
 
 ## Public deployment authentication
 
